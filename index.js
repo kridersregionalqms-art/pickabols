@@ -258,7 +258,7 @@ async function loadSession() {
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
     render();
-    if (!isOrg) pollTimer = setInterval(pollOnce, 5000);
+    if (!isOrg) startLive();
   } catch (e) {
     loadError = "Could not connect. Please try again in a moment.";
     render();
@@ -273,6 +273,52 @@ async function pollOnce() {
     lastSync = new Date().toLocaleTimeString();
     if (j.version !== version) { version = j.version; data = j.data; render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
+  } catch (e) {}
+}
+
+/* ---------- live updates (WebSocket) ---------- */
+var ws = null, wsTimer = null, wsPing = null, wsRetry = 0;
+function wsUrl() { return API.replace(/^http/, "ws") + "/api/sessions/" + sid + "/ws"; }
+function stopLive() {
+  clearInterval(pollTimer);
+  clearInterval(wsPing);
+  clearTimeout(wsTimer);
+  wsRetry = 0;
+  if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} ws = null; }
+}
+function startLive() {
+  if (isOrg || !sid) return;
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+  clearInterval(pollTimer);
+  pollTimer = setInterval(pollOnce, 15000); // slow fallback only, used when the socket is not connected
+  var mySid = sid;
+  try {
+    ws = new WebSocket(wsUrl());
+    ws.onopen = function () {
+      wsRetry = 0;
+      clearInterval(pollTimer);
+      clearInterval(wsPing);
+      wsPing = setInterval(function () {
+        try { if (ws && ws.readyState === 1) ws.send("ping"); } catch (e) {}
+      }, 40000);
+      pollOnce(); // catch up on anything missed while disconnected
+    };
+    ws.onmessage = function (e) {
+      if (e.data === "pong") return;
+      try {
+        var m = JSON.parse(e.data);
+        if (m && m.t === "changed" && m.v !== version) pollOnce();
+      } catch (x) {}
+    };
+    ws.onclose = function () {
+      clearInterval(wsPing);
+      ws = null;
+      if (sid !== mySid || isOrg) return;
+      clearInterval(pollTimer);
+      pollTimer = setInterval(pollOnce, 15000);
+      wsRetry = Math.min(wsRetry + 1, 5);
+      wsTimer = setTimeout(startLive, 1000 * Math.pow(2, wsRetry));
+    };
   } catch (e) {}
 }
 
@@ -385,7 +431,7 @@ function renderSession() {
   if (isOrg) {
     h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Saved") + "</p>";
   } else {
-    h += '<p class="muted">View only. Only the organizer can edit. Auto-refreshes every 5 seconds • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
+    h += '<p class="muted">View only. Only the organizer can edit. Updates automatically • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
   }
   if (isOrg) {
     h += '<div class="card"><h2>Share the scoreboard</h2>' +
@@ -531,11 +577,11 @@ document.addEventListener("change", function (e) {
     mutate(function (d) { d.target = v; });
   }
 });
-document.addEventListener("visibilitychange", function () { if (!document.hidden) pollOnce(); });
+document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); } });
 
 /* ---------- routing ---------- */
 function route() {
-  clearInterval(pollTimer);
+  stopLive();
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
   lastScore = null; flash = null;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
