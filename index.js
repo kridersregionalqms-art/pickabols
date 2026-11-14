@@ -370,12 +370,11 @@ function renderSession() {
     h += '<p class="muted">Panonood ka lang. Ang organizer lang ang makakapag-edit. Auto-refresh kada 5 segundo • Huling update: <span id="sync">' + esc(lastSync) + "</span></p>";
   }
   if (isOrg) {
-    h += '<div class="card"><h2>I-share</h2>' +
-      '<label>View link, ibigay sa players (scoreboard lang)</label><div class="linkbox">' + esc(base + "#/s/" + sid) + "</div>" +
-      '<div class="row" style="margin-top:6px"><button class="btn sec sm" data-act="copy" data-what="view">Kopyahin ang view link</button></div>' +
-      '<label>Organizer link, sa iyo lang (nakakapag-edit)</label><div class="linkbox">' + esc(base + "#/s/" + sid + "/" + key) + "</div>" +
-      '<div class="row" style="margin-top:6px"><button class="btn sec sm" data-act="copy" data-what="org">Kopyahin ang organizer link</button> <span class="muted" id="copied"></span></div>' +
-      '<p class="muted">Huwag ibigay sa players ang organizer link. Itago ito para makabalik ka kung magpalit ng device.</p></div>';
+    h += '<div class="card"><h2>I-share ang scoreboard</h2>' +
+      '<p class="muted">Ipadala sa players ang link para makita nila ang score (view-only).</p>' +
+      '<div class="row"><button class="btn grow" data-act="share">📤 I-share ang score link</button>' +
+      '<button class="btn sec" data-act="copy" data-what="view">Kopyahin</button></div>' +
+      '<p class="muted" id="copied"></p></div>';
   }
   if (c) {
     h += '<div class="card"><h2>Kasalukuyang laro • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
@@ -465,6 +464,15 @@ function copyText(t) {
     window.prompt("Kopyahin ito:", t);
   }
 }
+// Binubuksan ang share sheet ng phone (Messenger, Viber, SMS, atbp.). Kung hindi suportado, kokopyahin na lang ang link.
+function shareView(url) {
+  var title = (data && data.name) || "Pickleball Open Play";
+  if (navigator.share) {
+    navigator.share({ title: title, text: "Tingnan ang live score: " + title, url: url }).catch(function () {});
+  } else {
+    copyText(url);
+  }
+}
 function handle(act, ds) {
   var base = location.origin + location.pathname;
   switch (act) {
@@ -475,7 +483,8 @@ function handle(act, ds) {
       break;
     case "reload": loadSession(); break;
     case "retry": if (!saving) persist(); break;
-    case "copy": copyText(ds.what === "org" ? base + "#/s/" + sid + "/" + key : base + "#/s/" + sid); break;
+    case "copy": copyText(base + "#/s/" + sid); break;
+    case "share": shareView(base + "#/s/" + sid); break;
     case "rally": mutate(function (d) { rally(d, ds.team); }); break;
     case "undo": mutate(undo); break;
     case "save": mutate(finish); break;
