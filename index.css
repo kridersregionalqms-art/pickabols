@@ -24,10 +24,21 @@ input[type=text],textarea,select{width:100%;padding:10px 12px;border:1px solid v
 .team{border:2px solid var(--line);border-radius:14px;padding:12px;text-align:center}
 .team.A{border-color:var(--a)}
 .team.B{border-color:var(--b)}
-.team.srv{box-shadow:0 0 0 3px var(--ok)}
+.board.live .team:not(.srv){opacity:.5}
+.team.A.srv{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.team.B.srv{background:#e8590c;border-color:#e8590c;color:#fff}
+.team.srv .lbl{color:#fff}
+.srvtag{font-weight:800;font-size:.85rem;margin-top:4px;min-height:1.3em}
+.servebanner{border-radius:12px;padding:10px 12px;text-align:center;font-weight:800;color:#fff;margin:6px 0}
+.servebanner.A{background:#1f6feb}
+.servebanner.B{background:#e8590c}
+.score.pop{animation:pop .6s ease}
+.plus{position:absolute;top:-4px;right:8px;font-size:1.5rem;font-weight:800;color:var(--ok);animation:plusup 4s ease-out forwards}
+@keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.25)}100%{transform:scale(1)}}
+@keyframes plusup{0%{opacity:0;transform:translateY(8px)}10%{opacity:1;transform:translateY(0)}80%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}
 .team .lbl{font-size:.8rem;font-weight:700;color:var(--muted)}
 .names{font-weight:700;margin:2px 0 6px;word-break:break-word}
-.score{font-size:4.5rem;font-weight:800;line-height:1}
+.score{font-size:4.5rem;font-weight:800;line-height:1;position:relative}
 .call{text-align:center;font-size:1.8rem;font-weight:800;margin:14px 0 2px}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);font-size:.95rem}

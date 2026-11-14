@@ -7,6 +7,7 @@ var $app = document.getElementById("app");
 var sid = null, key = null, data = null, version = 0, isOrg = false;
 var pollTimer = null, loadError = null, lastSync = "", statusText = "";
 var saving = false, dirty = false;
+var lastScore = null, flash = null;
 
 /* ---------- helpers ---------- */
 function esc(s) {
@@ -314,11 +315,17 @@ function boardHtml(d, c) {
     var w = sA > sB ? c.teamA : c.teamB;
     h += '<div class="banner">🏆 Panalo: ' + nm(w) + " (" + sA + "–" + sB + ")</div>";
   }
-  h += '<div class="board">' +
-    '<div class="team A' + (c.server === "A" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM A</div><div class="names">' + nm(c.teamA) + '</div><div class="score">' + sA + "</div>" +
-    (c.server === "A" && !c.done ? '<div class="muted">🏓 Nagse-serve</div>' : "") + "</div>" +
-    '<div class="team B' + (c.server === "B" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM B</div><div class="names">' + nm(c.teamB) + '</div><div class="score">' + sB + "</div>" +
-    (c.server === "B" && !c.done ? '<div class="muted">🏓 Nagse-serve</div>' : "") + "</div></div>";
+  if (!c.done) {
+    h += '<div class="servebanner ' + c.server + '">🏓 SERVE: TEAM ' + c.server + " • " + nm(c.server === "A" ? c.teamA : c.teamB) + "</div>";
+  }
+  var fA = flash && flash.team === "A", fB = flash && flash.team === "B";
+  h += '<div class="board' + (c.done ? "" : " live") + '">' +
+    '<div class="team A' + (c.server === "A" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM A</div><div class="names">' + nm(c.teamA) + '</div>' +
+    '<div class="score' + (fA ? " pop" : "") + '">' + sA + (fA ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
+    (c.server === "A" && !c.done ? '<div class="srvtag">🏓 NAGSE-SERVE</div>' : '<div class="srvtag">&nbsp;</div>') + "</div>" +
+    '<div class="team B' + (c.server === "B" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM B</div><div class="names">' + nm(c.teamB) + '</div>' +
+    '<div class="score' + (fB ? " pop" : "") + '">' + sB + (fB ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
+    (c.server === "B" && !c.done ? '<div class="srvtag">🏓 NAGSE-SERVE</div>' : '<div class="srvtag">&nbsp;</div>') + "</div></div>";
   if (!c.done) {
     h += '<div class="call">' + esc(call) + "</div>" +
       '<div class="muted center">Mag-serve mula sa ' + side + (dbl ? " • Server #" + num(c.serverNum) : "") +
@@ -359,6 +366,17 @@ function renderSession() {
   }
   if (!data) { $app.innerHTML = '<p class="muted">Naglo-load...</p>'; return; }
   var d = data, c = d.current, n = d.next, dbl = d.mode === "doubles";
+  flash = null;
+  if (c) {
+    if (lastScore && lastScore.round === c.round) {
+      var da = num(c.scoreA) - lastScore.a, db = num(c.scoreB) - lastScore.b;
+      if (da > 0) flash = { team: "A", n: da };
+      else if (db > 0) flash = { team: "B", n: db };
+    }
+    lastScore = { round: c.round, a: num(c.scoreA), b: num(c.scoreB) };
+  } else {
+    lastScore = null;
+  }
   var nextIds = n ? [].concat(n.teamA, n.teamB) : [];
   var base = location.origin + location.pathname;
   var h = "";
@@ -519,6 +537,7 @@ document.addEventListener("visibilitychange", function () { if (!document.hidden
 function route() {
   clearInterval(pollTimer);
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
+  lastScore = null; flash = null;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
