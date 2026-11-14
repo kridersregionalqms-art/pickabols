@@ -215,7 +215,7 @@ async function persist() {
   if (!isOrg || !data) return;
   if (saving) { dirty = true; return; }
   saving = true;
-  setStatus("Nagse-save...");
+  setStatus("Saving...");
   try {
     do {
       dirty = false;
@@ -229,11 +229,11 @@ async function persist() {
       var j = await r.json();
       version = j.version;
     } while (dirty);
-    setStatus("✓ Naka-save");
+    setStatus("✓ Saved");
   } catch (e) {
     setStatus(e.message === "403"
-      ? "⚠ Mali ang organizer key, hindi makaka-save"
-      : "⚠ Hindi na-save. I-click ito para ulitin");
+      ? "⚠ Wrong organizer key, cannot save"
+      : "⚠ Not saved. Click here to retry");
   } finally {
     saving = false;
   }
@@ -250,7 +250,7 @@ async function loadSession() {
   render();
   try {
     var r = await fetch(API + "/api/sessions/" + sid, { cache: "no-store" });
-    if (r.status === 404) { loadError = "Hindi nahanap ang session na ito. Tiyaking tama ang link o code."; render(); return; }
+    if (r.status === 404) { loadError = "This session was not found. Please check that the link or code is correct."; render(); return; }
     if (!r.ok) throw new Error(String(r.status));
     var j = await r.json();
     data = j.data;
@@ -260,7 +260,7 @@ async function loadSession() {
     render();
     if (!isOrg) pollTimer = setInterval(pollOnce, 5000);
   } catch (e) {
-    loadError = "Hindi makakonekta. Subukan ulit sa ilang sandali.";
+    loadError = "Could not connect. Please try again in a moment.";
     render();
   }
 }
@@ -284,36 +284,36 @@ function renderHome() {
   var keys = loadKeys(), mine = Object.keys(keys);
   var list = "";
   if (mine.length) {
-    list = '<div class="card"><h2>Mga session mo sa device na ito</h2>' + mine.map(function (id) {
+    list = '<div class="card"><h2>Your sessions on this device</h2>' + mine.map(function (id) {
       return '<p><a href="#/s/' + esc(id) + '">' + esc(keys[id].name || "Session") + '</a> <span class="muted">(' + esc(id) + ')</span></p>';
     }).join("") + "</div>";
   }
   $app.innerHTML =
     '<h1>🏓 Pickleball Open Play</h1>' +
-    '<p class="muted">Random at patas na pag-ikot ng players para hindi matagal maghintay.</p>' +
-    '<div class="card"><h2>Gumawa ng bagong session</h2>' +
-    '<label>Pangalan ng grupo / team</label><input type="text" id="f-name" maxlength="40" placeholder="hal. Sabado Open Play">' +
-    '<label>Uri ng laro</label><div>' +
+    '<p class="muted">Random, fair rotation of players so nobody waits too long.</p>' +
+    '<div class="card"><h2>Create a new session</h2>' +
+    '<label>Group / team name</label><input type="text" id="f-name" maxlength="40" placeholder="e.g. Saturday Open Play">' +
+    '<label>Game type</label><div>' +
     '<label class="chip"><input type="radio" name="mode" value="doubles" checked> Doubles (2 vs 2)</label>' +
     '<label class="chip"><input type="radio" name="mode" value="singles"> Singles (1 vs 1)</label></div>' +
-    '<label>Hanggang ilang points ang laro?</label><select id="f-target"><option>11</option><option>15</option><option>21</option></select>' +
-    '<label>Mga pangalan ng players (isa kada linya)</label><textarea id="f-players" rows="8" placeholder="Juan&#10;Maria&#10;Pedro&#10;Ana"></textarea>' +
+    '<label>Play to how many points?</label><select id="f-target"><option>11</option><option>15</option><option>21</option></select>' +
+    '<label>Player names (one per line)</label><textarea id="f-players" rows="8" placeholder="John&#10;Mary&#10;Peter&#10;Anna"></textarea>' +
     '<p class="err" id="f-err"></p>' +
-    '<button class="btn" data-act="create">Simulan ang session</button></div>' +
-    '<div class="card"><h2>Buksan ang session gamit ang code</h2><div class="row">' +
-    '<input type="text" id="f-code" maxlength="12" placeholder="hal. K7XM2P" style="flex:1 1 160px">' +
-    '<button class="btn sec" data-act="join">Buksan</button></div></div>' + list;
+    '<button class="btn" data-act="create">Start session</button></div>' +
+    '<div class="card"><h2>Open a session with a code</h2><div class="row">' +
+    '<input type="text" id="f-code" maxlength="12" placeholder="e.g. K7XM2P" style="flex:1 1 160px">' +
+    '<button class="btn sec" data-act="join">Open</button></div></div>' + list;
 }
 function boardHtml(d, c) {
   var sA = num(c.scoreA), sB = num(c.scoreB), dbl = d.mode === "doubles";
   var srv = c.server === "A" ? sA : sB, rcv = c.server === "A" ? sB : sA;
   var call = dbl ? srv + "-" + rcv + "-" + num(c.serverNum) : srv + "-" + rcv;
-  var side = srv % 2 === 0 ? "kanan (even)" : "kaliwa (odd)";
+  var side = srv % 2 === 0 ? "right (even)" : "left (odd)";
   var nm = function (ids) { return esc(teamNames(ids)); };
   var h = "";
   if (c.done) {
     var w = sA > sB ? c.teamA : c.teamB;
-    h += '<div class="banner">🏆 Panalo: ' + nm(w) + " (" + sA + "–" + sB + ")</div>";
+    h += '<div class="banner">🏆 Winner: ' + nm(w) + " (" + sA + "–" + sB + ")</div>";
   }
   if (!c.done) {
     h += '<div class="servebanner ' + c.server + '">🏓 SERVE: TEAM ' + c.server + " • " + nm(c.server === "A" ? c.teamA : c.teamB) + "</div>";
@@ -322,49 +322,49 @@ function boardHtml(d, c) {
   h += '<div class="board' + (c.done ? "" : " live") + '">' +
     '<div class="team A' + (c.server === "A" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM A</div><div class="names">' + nm(c.teamA) + '</div>' +
     '<div class="score' + (fA ? " pop" : "") + '">' + sA + (fA ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
-    (c.server === "A" && !c.done ? '<div class="srvtag">🏓 NAGSE-SERVE</div>' : '<div class="srvtag">&nbsp;</div>') + "</div>" +
+    (c.server === "A" && !c.done ? '<div class="srvtag">🏓 SERVING</div>' : '<div class="srvtag">&nbsp;</div>') + "</div>" +
     '<div class="team B' + (c.server === "B" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM B</div><div class="names">' + nm(c.teamB) + '</div>' +
     '<div class="score' + (fB ? " pop" : "") + '">' + sB + (fB ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
-    (c.server === "B" && !c.done ? '<div class="srvtag">🏓 NAGSE-SERVE</div>' : '<div class="srvtag">&nbsp;</div>') + "</div></div>";
+    (c.server === "B" && !c.done ? '<div class="srvtag">🏓 SERVING</div>' : '<div class="srvtag">&nbsp;</div>') + "</div></div>";
   if (!c.done) {
     h += '<div class="call">' + esc(call) + "</div>" +
-      '<div class="muted center">Mag-serve mula sa ' + side + (dbl ? " • Server #" + num(c.serverNum) : "") +
-      " • Hanggang " + num(c.target) + ", win by 2</div>";
+      '<div class="muted center">Serve from the ' + side + (dbl ? " • Server #" + num(c.serverNum) : "") +
+      " • Play to " + num(c.target) + ", win by 2</div>";
   }
   if (isOrg) {
     if (c.done) {
-      h += '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="save">✅ I-save ang resulta</button>' +
+      h += '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="save">✅ Save result</button>' +
         '<button class="btn sec" data-act="undo">↩ Undo</button></div>';
     } else {
       h += '<div class="row" style="margin-top:14px">' +
-        '<button class="btn a grow" data-act="rally" data-team="A">Team A ang nanalo sa rally</button>' +
-        '<button class="btn b grow" data-act="rally" data-team="B">Team B ang nanalo sa rally</button></div>' +
+        '<button class="btn a grow" data-act="rally" data-team="A">Team A won the rally</button>' +
+        '<button class="btn b grow" data-act="rally" data-team="B">Team B won the rally</button></div>' +
         '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="undo"' +
         ((c.stack && c.stack.length) ? "" : " disabled") + '>↩ Undo</button></div>' +
-        '<p class="muted">Kapag ang nagse-serve ang nanalo sa rally, +1 point. Kapag ang receiver ang nanalo, walang point pero lilipat ang serve.</p>';
+        '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>';
     }
   }
   return h;
 }
 function nextHtml(d) {
   var n = d.next;
-  if (!n) return '<p class="muted">Kailangan ng hindi bababa sa ' + need(d) + " active players para makabuo ng laro.</p>";
+  if (!n) return '<p class="muted">At least ' + need(d) + " active players are needed to make a game.</p>";
   var h = '<p><strong>' + esc(teamNames(n.teamA)) + '</strong> <span class="muted">vs</span> <strong>' + esc(teamNames(n.teamB)) + "</strong></p>";
   if (isOrg) {
-    h += '<div class="row"><button class="btn grow" data-act="start"' + (d.current ? " disabled" : "") + '>▶ Simulan ang laro</button>' +
-      '<button class="btn sec" data-act="shuffle">🔀 Shuffle ulit</button></div>';
-    if (d.current) h += '<p class="muted">Matatapos muna ang kasalukuyang laro bago ito masimulan.</p>';
+    h += '<div class="row"><button class="btn grow" data-act="start"' + (d.current ? " disabled" : "") + '>▶ Start game</button>' +
+      '<button class="btn sec" data-act="shuffle">🔀 Shuffle again</button></div>';
+    if (d.current) h += '<p class="muted">The current game must finish before this one can start.</p>';
   }
   return h;
 }
 function renderSession() {
   if (loadError) {
     $app.innerHTML = '<h1>🏓 Pickleball Open Play</h1><div class="card"><p class="err">' + esc(loadError) +
-      '</p><div class="row"><a class="btn sec" href="#" style="text-decoration:none">Bumalik</a>' +
-      '<button class="btn" data-act="reload">Subukan ulit</button></div></div>';
+      '</p><div class="row"><a class="btn sec" href="#" style="text-decoration:none">Back</a>' +
+      '<button class="btn" data-act="reload">Try again</button></div></div>';
     return;
   }
-  if (!data) { $app.innerHTML = '<p class="muted">Naglo-load...</p>'; return; }
+  if (!data) { $app.innerHTML = '<p class="muted">Loading...</p>'; return; }
   var d = data, c = d.current, n = d.next, dbl = d.mode === "doubles";
   flash = null;
   if (c) {
@@ -381,48 +381,48 @@ function renderSession() {
   var base = location.origin + location.pathname;
   var h = "";
   h += "<h1>🏓 " + esc(d.name || "Open Play") + "</h1>";
-  h += '<p class="muted">' + (dbl ? "Doubles" : "Singles") + " • Hanggang " + num(d.target) + " • Code <strong>" + esc(sid) + "</strong></p>";
+  h += '<p class="muted">' + (dbl ? "Doubles" : "Singles") + " • Play to " + num(d.target) + " • Code <strong>" + esc(sid) + "</strong></p>";
   if (isOrg) {
-    h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Naka-save") + "</p>";
+    h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Saved") + "</p>";
   } else {
-    h += '<p class="muted">Panonood ka lang. Ang organizer lang ang makakapag-edit. Auto-refresh kada 5 segundo • Huling update: <span id="sync">' + esc(lastSync) + "</span></p>";
+    h += '<p class="muted">View only. Only the organizer can edit. Auto-refreshes every 5 seconds • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
   }
   if (isOrg) {
-    h += '<div class="card"><h2>I-share ang scoreboard</h2>' +
-      '<p class="muted">Ipadala sa players ang link para makita nila ang score (view-only).</p>' +
-      '<div class="row"><button class="btn grow" data-act="share">📤 I-share ang score link</button>' +
-      '<button class="btn sec" data-act="copy" data-what="view">Kopyahin</button></div>' +
+    h += '<div class="card"><h2>Share the scoreboard</h2>' +
+      '<p class="muted">Send players the link so they can see the score (view only).</p>' +
+      '<div class="row"><button class="btn grow" data-act="share">📤 Share score link</button>' +
+      '<button class="btn sec" data-act="copy" data-what="view">Copy</button></div>' +
       '<p class="muted" id="copied"></p></div>';
   }
   if (c) {
-    h += '<div class="card"><h2>Kasalukuyang laro • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
+    h += '<div class="card"><h2>Current game • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
   }
-  h += '<div class="card"><h2>' + (c ? "Susunod na laro" : "Handa na ang susunod na laro") + "</h2>" + nextHtml(d) + "</div>";
+  h += '<div class="card"><h2>' + (c ? "Next game" : "Next game is ready") + "</h2>" + nextHtml(d) + "</div>";
 
-  h += '<div class="card"><h2>Mga players (' + activePlayers(d).length + " active)</h2><table><tr><th>Pangalan</th><th>Laro</th><th>Status</th>" + (isOrg ? "<th></th>" : "") + "</tr>";
+  h += '<div class="card"><h2>Players (' + activePlayers(d).length + " active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>" + (isOrg ? "<th></th>" : "") + "</tr>";
   d.players.forEach(function (p) {
-    var st = !p.active ? '<span class="tag rest">Pahinga</span>'
-      : inCurrent(d, p.id) ? '<span class="tag play">Naglalaro</span>'
-      : nextIds.indexOf(p.id) >= 0 ? '<span class="tag next">Susunod</span>'
-      : '<span class="tag">Naghihintay</span>';
+    var st = !p.active ? '<span class="tag rest">Resting</span>'
+      : inCurrent(d, p.id) ? '<span class="tag play">Playing</span>'
+      : nextIds.indexOf(p.id) >= 0 ? '<span class="tag next">Up next</span>'
+      : '<span class="tag">Waiting</span>';
     h += "<tr><td>" + esc(p.name) + "</td><td>" + num(p.games) + "</td><td>" + st + "</td>";
     if (isOrg) {
-      h += '<td style="white-space:nowrap"><button class="btn sec sm" data-act="rest" data-id="' + esc(p.id) + '">' + (p.active ? "Pahinga" : "Balik") + "</button> " +
+      h += '<td style="white-space:nowrap"><button class="btn sec sm" data-act="rest" data-id="' + esc(p.id) + '">' + (p.active ? "Rest" : "Back") + "</button> " +
         '<button class="btn sec sm" data-act="remove" data-id="' + esc(p.id) + '">✕</button></td>';
     }
     h += "</tr>";
   });
   h += "</table>";
   if (isOrg) {
-    h += '<label>Magdagdag ng players (isa kada linya)</label><textarea id="f-add" rows="2"></textarea>' +
-      '<div class="row" style="margin-top:8px"><button class="btn sec" data-act="add">Idagdag</button></div>' +
-      '<label>Target points ng susunod na laro</label><select data-act="target">' +
+    h += '<label>Add players (one per line)</label><textarea id="f-add" rows="2"></textarea>' +
+      '<div class="row" style="margin-top:8px"><button class="btn sec" data-act="add">Add</button></div>' +
+      '<label>Target points for the next game</label><select data-act="target">' +
       [11, 15, 21].map(function (t) { return "<option" + (num(d.target) === t ? " selected" : "") + ">" + t + "</option>"; }).join("") + "</select>";
   }
   h += "</div>";
 
   if (d.history.length) {
-    h += '<div class="card"><h2>Mga natapos na laro (' + d.history.length + ")</h2><table>";
+    h += '<div class="card"><h2>Completed games (' + d.history.length + ")</h2><table>";
     d.history.slice().reverse().forEach(function (m) {
       var aw = num(m.sa) > num(m.sb);
       h += "<tr><td>#" + num(m.round) + "</td><td>" + (aw ? "<strong>" : "") + esc((m.a || []).join(" & ")) + (aw ? "</strong>" : "") +
@@ -431,17 +431,17 @@ function renderSession() {
     h += "</table></div>";
   }
 
-  h += '<div class="card"><details><summary>Paano ang scoring ng pickleball?</summary><ul>' +
-    "<li>Hanggang <strong>11</strong> points (o 15/21 depende sa napili), at kailangang <strong>lamang ng 2</strong>.</li>" +
-    "<li><strong>Ang nagse-serve lang ang nakaka-score.</strong> Kapag nanalo ang receiver sa rally, walang point pero napupunta sa kanila ang serve.</li>" +
-    "<li><strong>Doubles:</strong> tatlong numero ang tinatawag: score ng server, score ng receiver, at server #1 o #2 (halimbawa 4-2-1). Nagsisimula ang laro sa <strong>0-0-2</strong>. Kapag natalo ng server #1 ang rally, si server #2 (partner) naman ang magse-serve. Kapag natalo rin si #2, side-out na.</li>" +
-    "<li><strong>Singles:</strong> dalawang numero lang (score ng server, score ng receiver).</li>" +
-    "<li>Kapag <strong>even</strong> ang score ng nagse-serve, sa <strong>kanan</strong> siya mag-se-serve. Kapag <strong>odd</strong>, sa <strong>kaliwa</strong>.</li>" +
-    "<li>Underhand ang serve, pa-diagonal, at kailangang lumampas sa kitchen (7 feet na zone sa tabi ng net).</li>" +
-    "<li><strong>Two-bounce rule:</strong> kailangang tumalbog nang tig-isang beses sa magkabilang side bago pwedeng i-volley.</li>" +
-    "<li><strong>Kitchen:</strong> bawal mag-volley habang nasa loob ng kitchen.</li>" +
+  h += '<div class="card"><details><summary>How does pickleball scoring work?</summary><ul>' +
+    "<li>Games go to <strong>11</strong> points (or 15/21, depending on the session), and you must <strong>win by 2</strong>.</li>" +
+    "<li><strong>Only the serving side can score.</strong> If the receiving side wins the rally, no point is scored but they get the serve.</li>" +
+    "<li><strong>Doubles:</strong> the score is called with three numbers: server's score, receiver's score, and server #1 or #2 (for example 4-2-1). The game starts at <strong>0-0-2</strong>. When server #1 loses a rally, server #2 (the partner) serves next. When #2 also loses a rally, it's a side-out.</li>" +
+    "<li><strong>Singles:</strong> only two numbers are called (server's score, receiver's score).</li>" +
+    "<li>When the server's score is <strong>even</strong>, they serve from the <strong>right</strong>. When it is <strong>odd</strong>, they serve from the <strong>left</strong>.</li>" +
+    "<li>The serve is underhand, diagonal, and must clear the kitchen (the 7-foot zone next to the net).</li>" +
+    "<li><strong>Two-bounce rule:</strong> the ball must bounce once on each side before it can be volleyed.</li>" +
+    "<li><strong>Kitchen:</strong> no volleying while standing in the kitchen.</li>" +
     "</ul></details></div>";
-  h += '<p class="muted center"><a href="#">Gumawa ng bagong session</a></p>';
+  h += '<p class="muted center"><a href="#">Create a new session</a></p>';
   $app.innerHTML = h;
 }
 
@@ -455,10 +455,10 @@ async function createSession() {
   var names = parseNames($("f-players").value);
   var min = mode === "doubles" ? 4 : 2;
   if (names.length < min) {
-    err.textContent = "Kailangan ng hindi bababa sa " + min + " players para sa " + (mode === "doubles" ? "doubles" : "singles") + ".";
+    err.textContent = "At least " + min + " players are needed for " + (mode === "doubles" ? "doubles" : "singles") + ".";
     return;
   }
-  err.textContent = "Ginagawa...";
+  err.textContent = "Creating...";
   try {
     var d = makeData(name, mode, target, names);
     var r = await fetch(API + "/api/sessions", {
@@ -471,22 +471,22 @@ async function createSession() {
     saveKey(j.id, j.key, name);
     location.hash = "#/s/" + j.id + "/" + j.key;
   } catch (e) {
-    err.textContent = "Hindi nagawa ang session. Subukan ulit.";
+    err.textContent = "Could not create the session. Please try again.";
   }
 }
 function copyText(t) {
-  var ok = function () { var el = $("copied"); if (el) el.textContent = "Na-copy ✓"; };
+  var ok = function () { var el = $("copied"); if (el) el.textContent = "Copied ✓"; };
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(t).then(ok, function () { window.prompt("Kopyahin ito:", t); });
+    navigator.clipboard.writeText(t).then(ok, function () { window.prompt("Copy this:", t); });
   } else {
-    window.prompt("Kopyahin ito:", t);
+    window.prompt("Copy this:", t);
   }
 }
 // Binubuksan ang share sheet ng phone (Messenger, Viber, SMS, atbp.). Kung hindi suportado, kokopyahin na lang ang link.
 function shareView(url) {
   var title = (data && data.name) || "Pickleball Open Play";
   if (navigator.share) {
-    navigator.share({ title: title, text: "Tingnan ang live score: " + title, url: url }).catch(function () {});
+    navigator.share({ title: title, text: "Check the live score: " + title, url: url }).catch(function () {});
   } else {
     copyText(url);
   }
@@ -510,8 +510,8 @@ function handle(act, ds) {
     case "shuffle": mutate(genNext); break;
     case "rest": mutate(function (d) { toggleRest(d, ds.id); }); break;
     case "remove":
-      if (data && inCurrent(data, ds.id)) { window.alert("Naglalaro pa ang player na ito. Hintayin munang matapos ang laro."); break; }
-      if (window.confirm("Alisin ang player na ito?")) mutate(function (d) { removePlayer(d, ds.id); });
+      if (data && inCurrent(data, ds.id)) { window.alert("This player is still in a game. Please wait until the game is finished."); break; }
+      if (window.confirm("Remove this player?")) mutate(function (d) { removePlayer(d, ds.id); });
       break;
     case "add":
       var names = parseNames($("f-add").value);
