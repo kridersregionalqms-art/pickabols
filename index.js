@@ -391,7 +391,7 @@ function receiverId(d, c) {
   var mine = c.server === "A" ? c.posA : c.posB;
   return other[mine[0] === c.serverId ? 0 : 1];
 }
-function courtHtml(d, c) {
+function teamCourtRow(d, c, team) {
   ensurePos(c);
   var sv = c.serverId, rc = receiverId(d, c);
   function cell(id, side) {
@@ -401,19 +401,14 @@ function courtHtml(d, c) {
       (tag ? '<div class="crole">' + tag + "</div>" : "") +
       '<div class="cside">' + side + "</div></div>";
   }
-  var h = '<div class="court">';
   if (d.mode === "doubles") {
-    // Seen from above: Team A (top) has its right court on the viewer's left; Team B (bottom) has its right court on the viewer's right.
-    h += '<div class="crow">' + cell(c.posA[0], "Right") + cell(c.posA[1], "Left") + "</div>" +
-      '<div class="cband">TEAM A</div><div class="cband">TEAM B</div>' +
-      '<div class="crow">' + cell(c.posB[1], "Left") + cell(c.posB[0], "Right") + "</div>";
-  } else {
-    var sd = sideOfServer(d, c), empty = '<div class="cc empty"></div>';
-    h += '<div class="crow">' + (sd === "Right" ? cell(c.posA[0], sd) + empty : empty + cell(c.posA[0], sd)) + "</div>" +
-      '<div class="cband">TEAM A</div><div class="cband">TEAM B</div>' +
-      '<div class="crow">' + (sd === "Right" ? empty + cell(c.posB[0], sd) : cell(c.posB[0], sd) + empty) + "</div>";
+    var pos = team === "A" ? c.posA : c.posB;
+    return '<div class="crow">' + cell(pos[0], "Right") + cell(pos[1], "Left") + "</div>";
   }
-  return h + '</div><div class="muted center" style="font-size:.78rem">Right / Left are from each team\'s own side, facing the net.</div>';
+  var id = team === "A" ? c.posA[0] : c.posB[0];
+  var sd = sideOfServer(d, c);
+  var side = team === c.server ? sd : (sd === "Right" ? "Left" : "Right");
+  return '<div class="crow one">' + cell(id, side) + "</div>";
 }
 function callHtml(d, c) {
   var srv = c.server === "A" ? num(c.scoreA) : num(c.scoreB);
@@ -437,19 +432,16 @@ function boardHtml(d, c) {
     var w = sA > sB ? c.teamA : c.teamB;
     h += '<div class="banner">🏆 Winner: ' + nm(w) + " (" + sA + "–" + sB + ")</div>";
   }
-  if (!c.done) {
-    h += '<div class="servebanner ' + c.server + '">🏓 SERVE: TEAM ' + c.server + " • " + nm(c.server === "A" ? c.teamA : c.teamB) + "</div>";
-  }
   var fA = flash && flash.team === "A", fB = flash && flash.team === "B";
   h += '<div class="board' + (c.done ? "" : " live") + '">' +
     '<div class="team A' + (c.server === "A" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM A</div><div class="names">' + nm(c.teamA) + '</div>' +
     '<div class="score' + (fA ? " pop" : "") + '">' + sA + (fA ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
-    (c.server === "A" && !c.done ? '<div class="srvtag">🏓 SERVING</div>' : '<div class="srvtag">&nbsp;</div>') + "</div>" +
+    (!c.done ? teamCourtRow(d, c, "A") : "") + "</div>" +
     '<div class="team B' + (c.server === "B" && !c.done ? " srv" : "") + '"><div class="lbl">TEAM B</div><div class="names">' + nm(c.teamB) + '</div>' +
     '<div class="score' + (fB ? " pop" : "") + '">' + sB + (fB ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
-    (c.server === "B" && !c.done ? '<div class="srvtag">🏓 SERVING</div>' : '<div class="srvtag">&nbsp;</div>') + "</div></div>";
+    (!c.done ? teamCourtRow(d, c, "B") : "") + "</div></div>";
   if (!c.done) {
-    h += courtHtml(d, c) + callHtml(d, c) +
+    h += callHtml(d, c) +
       '<div class="muted center">' + esc(pname(c.serverId)) + " serves from the " + sideOfServer(d, c) +
       " • Play to " + num(c.target) + ", win by 2</div>";
   }
