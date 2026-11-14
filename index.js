@@ -145,9 +145,9 @@ function setWarmup(d, minutes) {
   d.pending.endsAt = Date.now() + minutes * 60000;
   d.pending.phase = "warmup";
 }
-function doToss(d) {
+function resolveServeRally(d, winner) {
   if (!d.pending) return;
-  d.pending.winner = Math.random() < 0.5 ? "A" : "B";
+  d.pending.winner = winner;
   d.pending.phase = "ready";
 }
 function beginGame(d) {
@@ -518,6 +518,7 @@ function nextHtml(d) {
   return h;
 }
 
+function d_mode_dbl(d) { return d.mode === "doubles"; }
 function pendingHtml(d) {
   var p = d.pending;
   var nmA = esc(teamNames(p.teamA)), nmB = esc(teamNames(p.teamB));
@@ -542,20 +543,24 @@ function pendingHtml(d) {
     var timeStr = mm + ":" + (ss < 10 ? "0" : "") + ss;
     h += '<div class="warmupbox"><div class="wlabel">⏱ WARM UP</div><div class="wtime">' + timeStr + '</div></div>';
     if (remain <= 0) h += '<p class="muted center">Time\'s up!' + (isOrg ? "" : " Waiting for the organizer...") + "</p>";
-    if (isOrg) h += '<div class="row" style="margin-top:8px"><button class="btn sec grow" data-act="toss-direct">⏭ Skip to play for serve</button></div>';
     return h;
   }
-  if (p.phase === "toss") {
-    h += '<p class="muted">Ready to decide who serves first.</p>';
-    h += isOrg ? '<div class="row"><button class="btn grow" data-act="flip">🪙 Flip for serve</button></div>'
-      : '<p class="muted">Waiting for the coin toss...</p>';
+  if (p.phase === "serve") {
+    h += '<p class="muted">Play one rally to decide who serves first. The winner starts serving at 0-0' + (d_mode_dbl(d) ? "-2" : "") + ".</p>";
+    if (isOrg) {
+      h += '<div class="row" style="margin-top:8px">' +
+        '<button class="btn a grow" data-act="serve-a">Team A won the rally</button>' +
+        '<button class="btn b grow" data-act="serve-b">Team B won the rally</button></div>';
+    } else {
+      h += '<p class="muted">Waiting for the organizer to play the serving rally...</p>';
+    }
     return h;
   }
   if (p.phase === "ready") {
     var wName = p.winner === "A" ? nmA : nmB;
-    h += '<div class="banner">🪙 ' + wName + " will serve first!</div>";
+    h += '<div class="banner">🏓 ' + wName + " won the rally and will serve first!</div>";
     if (isOrg) h += '<div class="row"><button class="btn grow" data-act="begin">▶ Begin game</button>' +
-      '<button class="btn sec" data-act="flip">🔁 Flip again</button></div>';
+      '<button class="btn sec" data-act="serve-redo">↩ Redo rally</button></div>';
     return h;
   }
   return h;
@@ -712,7 +717,7 @@ function handle(act, ds) {
     case "undo": mutate(undo); break;
     case "save": mutate(finish); break;
     case "setup": mutate(startSetup); break;
-    case "toss-direct": mutate(function (d) { if (d.pending) d.pending.phase = "toss"; }); break;
+    case "toss-direct": mutate(function (d) { if (d.pending) d.pending.phase = "serve"; }); break;
     case "warmup-ask": warmupInputOpen = true; render(); break;
     case "warmup-cancel": warmupInputOpen = false; render(); break;
     case "warmup-start":
@@ -721,7 +726,9 @@ function handle(act, ds) {
       mutate(function (d) { setWarmup(d, warmMin); });
       break;
     case "cancel-setup": warmupInputOpen = false; mutate(cancelSetup); break;
-    case "flip": mutate(doToss); break;
+    case "serve-a": mutate(function (d) { resolveServeRally(d, "A"); }); break;
+    case "serve-b": mutate(function (d) { resolveServeRally(d, "B"); }); break;
+    case "serve-redo": mutate(function (d) { if (d.pending) { d.pending.winner = null; d.pending.phase = "serve"; } }); break;
     case "begin": warmupInputOpen = false; mutate(beginGame); break;
     case "shuffle": mutate(genNext); break;
     case "rest": mutate(function (d) { toggleRest(d, ds.id); }); break;
