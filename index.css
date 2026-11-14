@@ -66,6 +66,9 @@ a{color:var(--a)}
 .callbox{border:2px solid var(--line);border-radius:10px;text-align:center;padding:5px 3px}
 .callbox.srv{border-color:#2f9e44}
 .callbox.rcv{border-color:#e03131}
+.warmupbox{background:var(--bg);border:2px dashed var(--a);border-radius:12px;padding:14px;text-align:center;margin:6px 0}
+.wlabel{font-size:.75rem;font-weight:800;color:var(--muted);letter-spacing:.04em}
+.wtime{font-size:2.4rem;font-weight:800;margin-top:2px}
 .cl{font-size:.62rem;font-weight:800;color:var(--muted);letter-spacing:.04em}
 .cn{font-size:1.4rem;font-weight:800;line-height:1.1}
 @media (max-width:420px){

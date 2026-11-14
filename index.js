@@ -8,6 +8,7 @@ var sid = null, key = null, data = null, version = 0, isOrg = false;
 var pollTimer = null, loadError = null, lastSync = "", statusText = "";
 var saving = false, dirty = false;
 var lastScore = null, flash = null;
+var uiTick = null, warmupInputOpen = false;
 
 /* ---------- helpers ---------- */
 function esc(s) {
@@ -37,7 +38,7 @@ function teamNames(ids) { return ids.map(pname).join(" & "); }
 function makeData(name, mode, target, names) {
   var d = {
     v: 1, name: name, mode: mode, target: target, round: 0,
-    players: [], partners: {}, opps: {}, history: [], current: null, next: null
+    players: [], partners: {}, opps: {}, history: [], current: null, next: null, pending: null
   };
   names.forEach(function (n) {
     d.players.push({ id: uid(), name: n, games: 0, last: 0, active: true });
@@ -96,13 +97,13 @@ function genNext(d) {
   }
   d.next = { teamA: A, teamB: B, round: num(d.round) + 1 };
 }
-function startNext(d) {
+function startNext(d, forced) {
   if (d.current) return;
   ensureNext(d);
   var n = d.next;
   if (!n) return;
   d.round = n.round;
-  var first = Math.random() < 0.5 ? "A" : "B";
+  var first = (forced === "A" || forced === "B") ? forced : (Math.random() < 0.5 ? "A" : "B");
   d.current = {
     round: n.round, teamA: n.teamA, teamB: n.teamB, scoreA: 0, scoreB: 0,
     server: first,
@@ -128,6 +129,35 @@ function startNext(d) {
   });
   d.next = null;
   genNext(d);
+}
+// Bago talaga simulan ang laro: pipili muna ang organizer sa pagitan ng "warm up" o diretsong "play for serve".
+function startSetup(d) {
+  if (d.current || d.pending) return;
+  ensureNext(d);
+  var n = d.next;
+  if (!n) return;
+  d.pending = { teamA: n.teamA, teamB: n.teamB, round: n.round, phase: "choose", minutes: 0, endsAt: 0, winner: null };
+}
+function setWarmup(d, minutes) {
+  if (!d.pending) return;
+  minutes = Math.max(1, Math.min(60, num(minutes) || 5));
+  d.pending.minutes = minutes;
+  d.pending.endsAt = Date.now() + minutes * 60000;
+  d.pending.phase = "warmup";
+}
+function doToss(d) {
+  if (!d.pending) return;
+  d.pending.winner = Math.random() < 0.5 ? "A" : "B";
+  d.pending.phase = "ready";
+}
+function beginGame(d) {
+  if (!d.pending || d.pending.phase !== "ready") return;
+  var forced = d.pending.winner;
+  d.pending = null;
+  startNext(d, forced);
+}
+function cancelSetup(d) {
+  d.pending = null;
 }
 // Court positions: pos arrays are [rightPlayerId, leftPlayerId] from each team's own view.
 function ensurePos(c) {
@@ -347,6 +377,19 @@ function startLive() {
   } catch (e) {}
 }
 
+/* ---------- warm-up countdown ---------- */
+function startUiTick() {
+  if (uiTick) return;
+  uiTick = setInterval(function () {
+    if (!data || !data.pending || data.pending.phase !== "warmup") { clearInterval(uiTick); uiTick = null; return; }
+    if (isOrg && Date.now() >= data.pending.endsAt) {
+      mutate(function (d) { if (d.pending) d.pending.phase = "toss"; });
+    } else {
+      render();
+    }
+  }, 1000);
+}
+
 /* ---------- views ---------- */
 function render() {
   if (!sid) renderHome(); else renderSession();
@@ -468,9 +511,52 @@ function nextHtml(d) {
   if (!n) return '<p class="muted">At least ' + need(d) + " active players are needed to make a game.</p>";
   var h = '<p><strong>' + esc(teamNames(n.teamA)) + '</strong> <span class="muted">vs</span> <strong>' + esc(teamNames(n.teamB)) + "</strong></p>";
   if (isOrg) {
-    h += '<div class="row"><button class="btn grow" data-act="start"' + (d.current ? " disabled" : "") + '>▶ Start game</button>' +
+    h += '<div class="row"><button class="btn grow" data-act="setup"' + (d.current ? " disabled" : "") + '>▶ Start game</button>' +
       '<button class="btn sec" data-act="shuffle">🔀 Shuffle again</button></div>';
     if (d.current) h += '<p class="muted">The current game must finish before this one can start.</p>';
+  }
+  return h;
+}
+
+function pendingHtml(d) {
+  var p = d.pending;
+  var nmA = esc(teamNames(p.teamA)), nmB = esc(teamNames(p.teamB));
+  var h = '<p><strong>' + nmA + '</strong> <span class="muted">vs</span> <strong>' + nmB + "</strong></p>";
+  if (p.phase === "choose") {
+    if (!isOrg) return h + '<p class="muted">Waiting for the organizer to start the game...</p>';
+    if (warmupInputOpen) {
+      h += '<label>Warm-up minutes</label><input type="text" id="f-warmup-min" inputmode="numeric" value="5" style="max-width:120px">' +
+        '<div class="row" style="margin-top:8px"><button class="btn grow" data-act="warmup-start">Start warm-up</button>' +
+        '<button class="btn sec" data-act="warmup-cancel">Back</button></div>';
+    } else {
+      h += '<p class="muted">How should this game start?</p>' +
+        '<div class="row"><button class="btn grow" data-act="toss-direct">🪙 Play for serve now</button>' +
+        '<button class="btn sec grow" data-act="warmup-ask">⏱ Warm up first</button></div>' +
+        '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="cancel-setup">Cancel</button></div>';
+    }
+    return h;
+  }
+  if (p.phase === "warmup") {
+    var remain = Math.max(0, Math.round((p.endsAt - Date.now()) / 1000));
+    var mm = Math.floor(remain / 60), ss = remain % 60;
+    var timeStr = mm + ":" + (ss < 10 ? "0" : "") + ss;
+    h += '<div class="warmupbox"><div class="wlabel">⏱ WARM UP</div><div class="wtime">' + timeStr + '</div></div>';
+    if (remain <= 0) h += '<p class="muted center">Time\'s up!' + (isOrg ? "" : " Waiting for the organizer...") + "</p>";
+    if (isOrg) h += '<div class="row" style="margin-top:8px"><button class="btn sec grow" data-act="toss-direct">⏭ Skip to play for serve</button></div>';
+    return h;
+  }
+  if (p.phase === "toss") {
+    h += '<p class="muted">Ready to decide who serves first.</p>';
+    h += isOrg ? '<div class="row"><button class="btn grow" data-act="flip">🪙 Flip for serve</button></div>'
+      : '<p class="muted">Waiting for the coin toss...</p>';
+    return h;
+  }
+  if (p.phase === "ready") {
+    var wName = p.winner === "A" ? nmA : nmB;
+    h += '<div class="banner">🪙 ' + wName + " will serve first!</div>";
+    if (isOrg) h += '<div class="row"><button class="btn grow" data-act="begin">▶ Begin game</button>' +
+      '<button class="btn sec" data-act="flip">🔁 Flip again</button></div>';
+    return h;
   }
   return h;
 }
@@ -514,7 +600,8 @@ function renderSession() {
   if (c) {
     h += '<div class="card"><h2>Current game • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
   }
-  h += '<div class="card"><h2>' + (c ? "Next game" : "Next game is ready") + "</h2>" + nextHtml(d) + "</div>";
+  if (d.pending && d.pending.phase === "warmup") startUiTick();
+  h += '<div class="card"><h2>' + (d.pending ? "Starting next game" : (c ? "Next game" : "Next game is ready")) + "</h2>" + (d.pending ? pendingHtml(d) : nextHtml(d)) + "</div>";
 
   h += '<div class="card"><h2>Players (' + activePlayers(d).length + " active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>" + (isOrg ? "<th></th>" : "") + "</tr>";
   d.players.forEach(function (p) {
@@ -624,7 +711,18 @@ function handle(act, ds) {
     case "rally": mutate(function (d) { rally(d, ds.team); }); break;
     case "undo": mutate(undo); break;
     case "save": mutate(finish); break;
-    case "start": mutate(startNext); break;
+    case "setup": mutate(startSetup); break;
+    case "toss-direct": mutate(function (d) { if (d.pending) d.pending.phase = "toss"; }); break;
+    case "warmup-ask": warmupInputOpen = true; render(); break;
+    case "warmup-cancel": warmupInputOpen = false; render(); break;
+    case "warmup-start":
+      var warmMin = num(($("f-warmup-min") || {}).value) || 5;
+      warmupInputOpen = false;
+      mutate(function (d) { setWarmup(d, warmMin); });
+      break;
+    case "cancel-setup": warmupInputOpen = false; mutate(cancelSetup); break;
+    case "flip": mutate(doToss); break;
+    case "begin": warmupInputOpen = false; mutate(beginGame); break;
     case "shuffle": mutate(genNext); break;
     case "rest": mutate(function (d) { toggleRest(d, ds.id); }); break;
     case "remove":
@@ -654,8 +752,9 @@ document.addEventListener("visibilitychange", function () { if (!document.hidden
 /* ---------- routing ---------- */
 function route() {
   stopLive();
+  if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null;
+  lastScore = null; flash = null; warmupInputOpen = false;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
