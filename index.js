@@ -102,10 +102,13 @@ function startNext(d) {
   var n = d.next;
   if (!n) return;
   d.round = n.round;
+  var first = Math.random() < 0.5 ? "A" : "B";
   d.current = {
     round: n.round, teamA: n.teamA, teamB: n.teamB, scoreA: 0, scoreB: 0,
-    server: Math.random() < 0.5 ? "A" : "B",
+    server: first,
     serverNum: d.mode === "doubles" ? 2 : 1,
+    posA: n.teamA.slice(), posB: n.teamB.slice(),
+    serverId: (first === "A" ? n.teamA : n.teamB)[0],
     target: d.target, done: false, stack: []
   };
   [].concat(n.teamA, n.teamB).forEach(function (id) {
@@ -126,6 +129,20 @@ function startNext(d) {
   d.next = null;
   genNext(d);
 }
+// Court positions: pos arrays are [rightPlayerId, leftPlayerId] from each team's own view.
+function ensurePos(c) {
+  if (!c.posA) c.posA = c.teamA.slice();
+  if (!c.posB) c.posB = c.teamB.slice();
+  if (!c.serverId) c.serverId = (c.server === "A" ? c.posA : c.posB)[0];
+}
+function swapSides(c, team) {
+  var key = team === "A" ? "posA" : "posB";
+  if (c[key] && c[key].length === 2) c[key] = [c[key][1], c[key][0]];
+}
+function partnerOf(c, id) {
+  var arr = c.posA.indexOf(id) >= 0 ? c.posA : c.posB;
+  return arr[0] === id ? arr[1] : arr[0];
+}
 function checkDone(c) {
   var a = num(c.scoreA), b = num(c.scoreB);
   c.done = Math.max(a, b) >= num(c.target) && Math.abs(a - b) >= 2;
@@ -136,15 +153,22 @@ function rally(d, winner) {
   var c = d.current;
   if (!c || c.done) return;
   c.stack = c.stack || [];
-  c.stack.push([c.scoreA, c.scoreB, c.server, c.serverNum]);
+  ensurePos(c);
+  c.stack.push([c.scoreA, c.scoreB, c.server, c.serverNum, c.posA.slice(), c.posB.slice(), c.serverId]);
   if (c.stack.length > 40) c.stack.shift();
   if (winner === c.server) {
     if (winner === "A") c.scoreA = num(c.scoreA) + 1; else c.scoreB = num(c.scoreB) + 1;
+    // the serving team's two players switch sides after every point
+    if (d.mode === "doubles") swapSides(c, winner);
   } else if (d.mode === "doubles" && num(c.serverNum) === 1) {
     c.serverNum = 2;
+    // the partner serves from where he/she is standing
+    c.serverId = partnerOf(c, c.serverId);
   } else {
     c.server = c.server === "A" ? "B" : "A";
     c.serverNum = 1;
+    // side-out: the new serving team's right-side player serves first
+    c.serverId = (c.server === "A" ? c.posA : c.posB)[0];
   }
   checkDone(c);
 }
@@ -153,6 +177,7 @@ function undo(d) {
   if (!c || !c.stack || !c.stack.length) return;
   var s = c.stack.pop();
   c.scoreA = s[0]; c.scoreB = s[1]; c.server = s[2]; c.serverNum = s[3];
+  if (s[4]) { c.posA = s[4]; c.posB = s[5]; c.serverId = s[6]; }
   checkDone(c);
 }
 function finish(d) {
@@ -350,6 +375,57 @@ function renderHome() {
     '<input type="text" id="f-code" maxlength="12" placeholder="e.g. K7XM2P" style="flex:1 1 160px">' +
     '<button class="btn sec" data-act="join">Open</button></div></div>' + list;
 }
+function sideOfServer(d, c) {
+  ensurePos(c);
+  if (d.mode !== "doubles") {
+    var s = c.server === "A" ? num(c.scoreA) : num(c.scoreB);
+    return s % 2 === 0 ? "Right" : "Left";
+  }
+  var arr = c.server === "A" ? c.posA : c.posB;
+  return arr[0] === c.serverId ? "Right" : "Left";
+}
+function receiverId(d, c) {
+  ensurePos(c);
+  var other = c.server === "A" ? c.posB : c.posA;
+  if (d.mode !== "doubles") return other[0];
+  var mine = c.server === "A" ? c.posA : c.posB;
+  return other[mine[0] === c.serverId ? 0 : 1];
+}
+function courtHtml(d, c) {
+  ensurePos(c);
+  var sv = c.serverId, rc = receiverId(d, c);
+  function cell(id, side) {
+    var role = id === sv ? "srv" : id === rc ? "rcv" : "";
+    var tag = role === "srv" ? "Server" : role === "rcv" ? "Receiver" : "";
+    return '<div class="cc ' + role + '"><div class="cname">' + esc(pname(id)) + "</div>" +
+      (tag ? '<div class="crole">' + tag + "</div>" : "") +
+      '<div class="cside">' + side + "</div></div>";
+  }
+  var h = '<div class="court">';
+  if (d.mode === "doubles") {
+    // Seen from above: Team A (top) has its right court on the viewer's left; Team B (bottom) has its right court on the viewer's right.
+    h += '<div class="crow">' + cell(c.posA[0], "Right") + cell(c.posA[1], "Left") + "</div>" +
+      '<div class="cband">TEAM A</div><div class="cband">TEAM B</div>' +
+      '<div class="crow">' + cell(c.posB[1], "Left") + cell(c.posB[0], "Right") + "</div>";
+  } else {
+    var sd = sideOfServer(d, c), empty = '<div class="cc empty"></div>';
+    h += '<div class="crow">' + (sd === "Right" ? cell(c.posA[0], sd) + empty : empty + cell(c.posA[0], sd)) + "</div>" +
+      '<div class="cband">TEAM A</div><div class="cband">TEAM B</div>' +
+      '<div class="crow">' + (sd === "Right" ? empty + cell(c.posB[0], sd) : cell(c.posB[0], sd) + empty) + "</div>";
+  }
+  return h + '</div><div class="muted center" style="font-size:.78rem">Right / Left are from each team\'s own side, facing the net.</div>';
+}
+function callHtml(d, c) {
+  var srv = c.server === "A" ? num(c.scoreA) : num(c.scoreB);
+  var rcv = c.server === "A" ? num(c.scoreB) : num(c.scoreA);
+  var h = '<div class="callrow">' +
+    '<div class="callbox srv"><div class="cl">SERVER SCORE</div><div class="cn">' + srv + "</div></div>" +
+    '<div class="callbox rcv"><div class="cl">RECEIVER SCORE</div><div class="cn">' + rcv + "</div></div>";
+  if (d.mode === "doubles") {
+    h += '<div class="callbox"><div class="cl">SERVER NO.</div><div class="cn">' + num(c.serverNum) + "</div></div>";
+  }
+  return h + "</div>";
+}
 function boardHtml(d, c) {
   var sA = num(c.scoreA), sB = num(c.scoreB), dbl = d.mode === "doubles";
   var srv = c.server === "A" ? sA : sB, rcv = c.server === "A" ? sB : sA;
@@ -373,8 +449,8 @@ function boardHtml(d, c) {
     '<div class="score' + (fB ? " pop" : "") + '">' + sB + (fB ? '<span class="plus">+' + flash.n + "</span>" : "") + "</div>" +
     (c.server === "B" && !c.done ? '<div class="srvtag">🏓 SERVING</div>' : '<div class="srvtag">&nbsp;</div>') + "</div></div>";
   if (!c.done) {
-    h += '<div class="call">' + esc(call) + "</div>" +
-      '<div class="muted center">Serve from the ' + side + (dbl ? " • Server #" + num(c.serverNum) : "") +
+    h += courtHtml(d, c) + callHtml(d, c) +
+      '<div class="muted center">' + esc(pname(c.serverId)) + " serves from the " + sideOfServer(d, c) +
       " • Play to " + num(c.target) + ", win by 2</div>";
   }
   if (isOrg) {
@@ -482,7 +558,8 @@ function renderSession() {
     "<li><strong>Only the serving side can score.</strong> If the receiving side wins the rally, no point is scored but they get the serve.</li>" +
     "<li><strong>Doubles:</strong> the score is called with three numbers: server's score, receiver's score, and server #1 or #2 (for example 4-2-1). The game starts at <strong>0-0-2</strong>. When server #1 loses a rally, server #2 (the partner) serves next. When #2 also loses a rally, it's a side-out.</li>" +
     "<li><strong>Singles:</strong> only two numbers are called (server's score, receiver's score).</li>" +
-    "<li>When the server's score is <strong>even</strong>, they serve from the <strong>right</strong>. When it is <strong>odd</strong>, they serve from the <strong>left</strong>.</li>" +
+    "<li><strong>Singles:</strong> the server serves from the <strong>right</strong> when their score is even and from the <strong>left</strong> when it is odd.</li>" +
+    "<li><strong>Doubles:</strong> the serving team's two players <strong>switch sides every time they score</strong>. After a side-out, the player on the <strong>right</strong> serves first.</li>" +
     "<li>The serve is underhand, diagonal, and must clear the kitchen (the 7-foot zone next to the net).</li>" +
     "<li><strong>Two-bounce rule:</strong> the ball must bounce once on each side before it can be volleyed.</li>" +
     "<li><strong>Kitchen:</strong> no volleying while standing in the kitchen.</li>" +
