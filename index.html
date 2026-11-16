@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
 <title>Pickleball Open Play</title>
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/png" href="logo.png">
+<meta property="og:title" content="Pickleball Open Play">
+<meta property="og:description" content="Live pickleball scoreboard">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://kridersregionalqms-art.github.io/pickabols/logo.png">
 <style>
 *{box-sizing:border-box}
 :root{--bg:#f4f6f8;--card:#fff;--text:#1b2430;--muted:#64707d;--line:#dfe4ea;--a:#1f6feb;--b:#e8590c;--ok:#2f9e44;--bad:#d6336c;--btn:#1b2430;--btntext:#fff}
@@ -107,6 +111,11 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .wtime{font-size:2.4rem;font-weight:800;margin-top:2px}
 .cl{font-size:.62rem;font-weight:800;color:var(--muted);letter-spacing:.04em}
 .cn{font-size:1.4rem;font-weight:800;line-height:1.1}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{margin:0;min-width:0;word-break:break-word}
+.brand.home{flex-direction:column;text-align:center;margin:6px 0 10px;gap:4px}
+.logo-lg{display:block;width:min(100%,300px);height:auto}
+.logo-sm{height:40px;width:auto;max-width:45%;object-fit:contain;flex:0 0 auto}
 @keyframes spin{to{transform:rotate(360deg)}}
 .saving [data-act="rally"],.saving [data-act="undo"],.saving [data-act="save"],.saving .cc.tap{pointer-events:none;position:relative}
 .saving [data-act="rally"],.saving [data-act="undo"],.saving [data-act="save"]{opacity:.75}
@@ -146,6 +155,6 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 <body>
 <div id="app"><p class="muted">Loading...</p></div>
 <noscript>JavaScript is required for this page to work.</noscript>
-<script src="index.js"></script>
+<script src="index.js?v=2"></script>
 </body>
 </html>

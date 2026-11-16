@@ -558,7 +558,7 @@ function renderHome() {
     }).join("") + "</div>";
   }
   $app.innerHTML =
-    '<h1>🏓 Pickleball Open Play</h1>' +
+    '<div class="brand home"><img class="logo-lg" src="logo.png" alt="Pickabol logo"><h1>Pickleball Open Play</h1></div>' +
     '<p class="muted">Random, fair rotation of players so nobody waits too long.</p>' +
     '<div class="card"><h2>Create a new session</h2>' +
     '<label>Group / team name</label><input type="text" id="f-name" maxlength="40" placeholder="e.g. Saturday Open Play">' +
@@ -782,7 +782,7 @@ function renderSession() {
   var nextIds = n ? [].concat(n.teamA, n.teamB) : [];
   var base = location.origin + location.pathname;
   var h = "";
-  h += "<h1>🏓 " + esc(d.name || "Open Play") + "</h1>";
+  h += '<div class="brand"><img class="logo-sm" src="logo.png" alt="Pickabol"><h1>' + esc(d.name || "Open Play") + "</h1></div>";
   if (cachedMode) h += '<p class="muted" id="cachenote">' + esc(cacheNoteText()) + "</p>";
   h += '<p class="muted">' + (dbl ? "Doubles" : "Singles") + " • Play to " + num(d.target) + " • Code <strong>" + esc(sid) + "</strong></p>";
   if (isOrg) {
