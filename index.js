@@ -15,6 +15,7 @@ var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
 var holdUntil = 0, holdTimer = null, cachedMode = false;
 var pickPid = null; // ang player na na-tap at hinihintay ang source (hindi ito sine-save)
+var homeView = "new"; // anong card ang ipapakita sa home: "new", "join" o "mine" (whitelist, tingnan ang __pbHome)
 // ====== LISTAHAN NG SOURCE NG SCORE ======
 // Para magdagdag: isang linya lang ["key", "Label"]. Ang key ay a-z at _ lang, hanggang 16 na letra.
 var SOURCES = [
@@ -553,28 +554,36 @@ function render() {
   if (!sid) renderHome(); else renderSession();
 }
 function renderHome() {
-  var keys = loadKeys(), mine = Object.keys(keys);
-  var list = "";
-  if (mine.length) {
-    list = '<div class="card"><h2>Your sessions on this device</h2>' + mine.map(function (id) {
-      return '<p><a href="#/s/' + esc(id) + '">' + esc(keys[id].name || "Session") + '</a> <span class="muted">(' + esc(id) + ')</span></p>';
-    }).join("") + "</div>";
-  }
-  $app.innerHTML =
+  var keys = loadKeys();
+  // Ang mga code lang na tama ang hugis ang ipinapakita (maaaring galawin ng iba ang localStorage).
+  var mine = Object.keys(keys).filter(function (id) { return /^[A-Za-z0-9]{4,12}$/.test(id); });
+  var head =
     '<div class="brand home"><img class="logo-lg" src="logo.png" alt="Pickabol logo"><h1>Pickleball Open Play</h1></div>' +
-    '<p class="muted">Random, fair rotation of players so nobody waits too long.</p>' +
-    '<div class="card"><h2>Create a new session</h2>' +
-    '<label>Group / team name</label><input type="text" id="f-name" maxlength="40" placeholder="e.g. Saturday Open Play">' +
-    '<label>Game type</label><div>' +
-    '<label class="chip"><input type="radio" name="mode" value="doubles" checked> Doubles (2 vs 2)</label>' +
-    '<label class="chip"><input type="radio" name="mode" value="singles"> Singles (1 vs 1)</label></div>' +
-    '<label>Play to how many points?</label><select id="f-target"><option>11</option><option>15</option><option>21</option></select>' +
-    '<label>Player names (one per line)</label><textarea id="f-players" rows="8" placeholder="John&#10;Mary&#10;Peter&#10;Anna"></textarea>' +
-    '<p class="err" id="f-err"></p>' +
-    '<button class="btn" data-act="create">Start session</button></div>' +
-    '<div class="card"><h2>Open a session with a code</h2><div class="row">' +
-    '<input type="text" id="f-code" maxlength="12" placeholder="e.g. K7XM2P" style="flex:1 1 160px">' +
-    '<button class="btn sec" data-act="join">Open</button></div></div>' + list;
+    '<p class="muted">Random, fair rotation of players so nobody waits too long.</p>';
+  var card = "";
+  if (homeView === "join") {
+    card =
+      '<div class="card"><h2>Open a session with a code</h2><div class="row">' +
+      '<input type="text" id="f-code" maxlength="12" placeholder="e.g. K7XM2P" style="flex:1 1 160px">' +
+      '<button class="btn sec" data-act="join">Open</button></div></div>';
+  } else if (homeView === "mine") {
+    card = '<div class="card"><h2>Your sessions on this device</h2>' + (mine.length ? mine.map(function (id) {
+      var nm = String((keys[id] && keys[id].name) || "Session").slice(0, 40);
+      return '<p><a href="#/s/' + esc(id) + '">' + esc(nm) + '</a> <span class="muted">(' + esc(id) + ')</span></p>';
+    }).join("") : '<p class="muted">No sessions on this device yet.</p>') + "</div>";
+  } else {
+    card =
+      '<div class="card"><h2>Create a new session</h2>' +
+      '<label>Group / team name</label><input type="text" id="f-name" maxlength="40" placeholder="e.g. Saturday Open Play">' +
+      '<label>Game type</label><div>' +
+      '<label class="chip"><input type="radio" name="mode" value="doubles" checked> Doubles (2 vs 2)</label>' +
+      '<label class="chip"><input type="radio" name="mode" value="singles"> Singles (1 vs 1)</label></div>' +
+      '<label>Play to how many points?</label><select id="f-target"><option>11</option><option>15</option><option>21</option></select>' +
+      '<label>Player names (one per line)</label><textarea id="f-players" rows="8" placeholder="John&#10;Mary&#10;Peter&#10;Anna"></textarea>' +
+      '<p class="err" id="f-err"></p>' +
+      '<button class="btn" data-act="create">Start session</button></div>';
+  }
+  $app.innerHTML = head + card;
 }
 function sideOfServer(d, c) {
   ensurePos(c);
@@ -853,7 +862,7 @@ function renderSession() {
     "<li><strong>Two-bounce rule:</strong> the ball must bounce once on each side before it can be volleyed.</li>" +
     "<li><strong>Kitchen:</strong> no volleying while standing in the kitchen.</li>" +
     "</ul></details></div>";
-  h += '<p class="muted center"><a href="#">Create a new session</a></p>';
+  h += '<p class="muted center"><a href="#" data-act="home-new">Create a new session</a></p>';
   $app.innerHTML = h;
 }
 
@@ -912,6 +921,7 @@ function handle(act, ds) {
       if (code.length >= 4) location.hash = "#/s/" + code;
       break;
     case "reload": loadSession(); break;
+    case "home-new": homeView = "new"; break; // ang href="#" ang maglilipat pabalik sa home
     case "retry": if (!saving) persist(); break;
     case "copy": copyText(base + "#/s/" + sid); break;
     case "share": shareView(base + "#/s/" + sid); break;
@@ -1074,6 +1084,13 @@ function bestStats(d) {
   return { games: games, sources: SOURCES.map(function (s) { return [s[0], s[1]]; }), lists: lists };
 }
 window.__pbBest = function () { return data ? bestStats(data) : null; };
+// Para sa "Sessions" sa navigation: whitelist lang ang tinatanggap na view, walang HTML o data na galing sa labas.
+window.__pbHome = function (view) {
+  if (view !== "new" && view !== "join" && view !== "mine") return;
+  homeView = view;
+  if (location.hash) location.hash = ""; // hashchange -> route() -> renderHome
+  else render();
+};
 // Para sa Settings sa navigation: hugis lang ng settings ang ibinibigay, hindi ang buong session.
 window.__pbSettings = function () {
   if (!data) return null;
@@ -1149,13 +1166,30 @@ var nav = el("nav", "nav-side");
 nav.id = "nav";
 nav.setAttribute("aria-label", "Main navigation");
 
-var themeBtn = el("button", "btn sec nav-theme");
-themeBtn.type = "button";
+// Switch na may label sa kaliwa, "On/Off" sa tabi, at slider sa kanan. Fixed na text lang ang ginagamit (textContent).
+function makeSwitch(text) {
+  var row = el("button", "sw-row");
+  row.type = "button";
+  row.setAttribute("role", "switch");
+  row.setAttribute("aria-checked", "false");
+  var state = el("span", "sw-state", "Off");
+  var track = el("span", "sw-track");
+  track.appendChild(el("span", "sw-knob"));
+  row.appendChild(el("span", "sw-name", text));
+  row.appendChild(state);
+  row.appendChild(track);
+  return { row: row, state: state };
+}
+function paintSwitch(sw, on, disabled) {
+  sw.row.setAttribute("aria-checked", on ? "true" : "false");
+  sw.row.classList.toggle("on", !!on);
+  sw.row.disabled = !!disabled;
+  sw.state.textContent = on ? "On" : "Off";
+}
+
+var themeSw = makeSwitch("Dark mode");
+var themeBtn = themeSw.row;
 themeBtn.id = "theme-btn";
-var icon = el("span", "nav-icon");
-var label = el("span", "nav-label");
-themeBtn.appendChild(icon);
-themeBtn.appendChild(label);
 
 // Logo sa itaas ng sidebar. Fixed ang src at alt, walang galing sa user.
 var navLogo = document.createElement("img");
@@ -1165,7 +1199,43 @@ navLogo.alt = "Pickabol";
 navLogo.decoding = "async";
 nav.appendChild(navLogo);
 nav.appendChild(el("div", "nav-title", "Menu"));
-// Ang theme button ay nasa loob na ng Settings panel (tingnan sa ibaba).
+
+// "Sessions": may sub-navigation (New session, Join with code, My sessions). Fixed na listahan lang, walang galing sa labas.
+var sessBtn = el("button", "btn sec nav-theme");
+sessBtn.type = "button";
+sessBtn.id = "sess-btn";
+sessBtn.setAttribute("aria-expanded", "false");
+sessBtn.appendChild(el("span", "nav-icon", "\uD83C\uDFD3"));
+sessBtn.appendChild(el("span", "nav-label", "Sessions"));
+var sessCaret = el("span", "nav-icon nav-caret", "\u25BE");
+sessBtn.appendChild(sessCaret);
+nav.appendChild(sessBtn);
+
+var sessSub = el("div", "nav-sub");
+sessSub.hidden = true;
+var SESS_ITEMS = [
+  ["new", "\u2795 New session"],
+  ["join", "\uD83D\uDD11 Join with code"],
+  ["mine", "\uD83D\uDCCB My sessions"]
+];
+SESS_ITEMS.forEach(function (it) {
+  var b = el("button", "btn sec sm nav-theme", it[1]);
+  b.type = "button";
+  b.addEventListener("click", function (e) {
+    if (!e.isTrusted) return; // click na gawa ng script, balewalain
+    if (typeof window.__pbHome === "function") window.__pbHome(it[0]);
+    if (!(wide && wide.matches)) setNav(false, false); // sa phone, isara ang nav pagkatapos pumili
+  });
+  sessSub.appendChild(b);
+});
+nav.appendChild(sessSub);
+sessBtn.addEventListener("click", function (e) {
+  if (!e.isTrusted) return;
+  sessSub.hidden = !sessSub.hidden;
+  sessCaret.textContent = sessSub.hidden ? "\u25BE" : "\u25B4";
+  sessBtn.setAttribute("aria-expanded", sessSub.hidden ? "false" : "true");
+});
+// Ang Dark mode switch ay nasa footer ng nav (tingnan sa ibaba).
 
 // Ang "Top" ay lalabas lang kapag ON ang Analytics ng session. Ang pag-click dito ay nagbubukas ng sub-navigation.
 var topBtn = el("button", "btn sec nav-theme");
@@ -1222,31 +1292,20 @@ bestBtn.addEventListener("click", function () {
   bestBtn.setAttribute("aria-expanded", bestSub.hidden ? "false" : "true");
 });
 // ---- Settings (footer ng sidebar) ----
-var HINT_KEY = "pb_hint";
-function hintState() {
-  try { var v = localStorage.getItem(HINT_KEY); return v === "2" || v === "done" ? v : "1"; } catch (e) { return "done"; }
-}
-function setHint(v) { try { localStorage.setItem(HINT_KEY, v); } catch (e) {} }
-
 var setWrap = el("div", "nav-foot");
 
-var hintFoot = el("div", "hint hint-foot");
+var hintFoot = el("div", "hint hint-foot", "Turn on Analytics to see Top and Best.");
 hintFoot.hidden = true;
-hintFoot.appendChild(el("div", "", "Dark/Light mode and Analytics are here."));
-var hintFootOk = el("button", "btn sm", "Got it");
-hintFootOk.type = "button";
-hintFoot.appendChild(hintFootOk);
 
 var setPanel = el("div", "nav-setpanel");
 setPanel.hidden = true;
-setPanel.appendChild(el("div", "nav-title", "Appearance"));
-setPanel.appendChild(themeBtn);
+// Ang Dark mode switch ay nasa footer na ng nav (tingnan sa ibaba), wala na rito.
 
 var orgBox = el("div", "nav-org");
 orgBox.hidden = true;
 orgBox.appendChild(el("div", "nav-title set-gap", "Organizer"));
-var anBtn = el("button", "btn sec nav-theme");
-anBtn.type = "button";
+var anSw = makeSwitch("Analytics");
+var anBtn = anSw.row;
 var anNote = el("p", "muted");
 var topLabel = el("label", "", "Show Top how many to everyone?");
 var topSel = document.createElement("select");
@@ -1273,70 +1332,72 @@ setBtn.appendChild(setCaret);
 setWrap.appendChild(hintFoot);
 setWrap.appendChild(setPanel);
 setWrap.appendChild(setBtn);
+setWrap.appendChild(themeBtn);
 nav.appendChild(setWrap);
 
-// Unang hint: nakaturo sa ☰ button.
-var hintTop = el("div", "hint hint-top");
+// Hint na nakaturo sa ☰ button. Organizer lang, at lalabas habang OFF ang Analytics.
+var hintTop = el("div", "hint hint-top", "Turn on Analytics to see Top and Best.");
 hintTop.hidden = true;
-hintTop.appendChild(el("div", "", "Tap here for Settings, Top and Best."));
-var hintTopOk = el("button", "btn sm", "Got it");
-hintTopOk.type = "button";
-hintTop.appendChild(hintTopOk);
+hintTop.style.pointerEvents = "none"; // hindi hinaharangan ang clicks sa page
 body.appendChild(hintTop);
 
+// Ang hint ay galing lang sa totoong state ng session (organizer at OFF ang Analytics). Walang galing sa user input.
 function paintHint() {
-  if (!hintTop) return;
-  var s = hintState();
-  if (s === "1" && isOpen()) { setHint("2"); s = "2"; }
-  toggle.classList.toggle("pulse", s === "1");
-  hintTop.hidden = s !== "1";
-  hintFoot.hidden = !(s === "2" && isOpen());
+  var st = settingsNow();
+  var need = !!(st && st.org && !st.analytics);
+  var open = isOpen();
+  toggle.classList.toggle("pulse", need && !open);
+  hintTop.hidden = !(need && !open);                    // nakaturo sa ☰ kapag sarado ang nav
+  hintFoot.hidden = !(need && open && setPanel.hidden); // nakaturo sa Settings kapag bukas ang nav
 }
-hintTopOk.addEventListener("click", function () { setHint("2"); paintHint(); });
-hintFootOk.addEventListener("click", function () { setHint("done"); paintHint(); });
 
 setBtn.addEventListener("click", function () {
   setPanel.hidden = !setPanel.hidden;
   setCaret.textContent = setPanel.hidden ? "\u25B4" : "\u25BE";
   setBtn.setAttribute("aria-expanded", setPanel.hidden ? "false" : "true");
-  if (hintState() === "2") { setHint("done"); paintHint(); }
+  paintHint();
 });
 
 function settingsNow() {
   try { return typeof window.__pbSettings === "function" ? window.__pbSettings() : null; } catch (e) { return null; }
 }
-// Organizer lang ang nakakakita ng Analytics at Top N. Ang viewer ay Dark/Light lang.
+// Organizer lang ang nakakakita ng Settings (Analytics at Top N). Ang viewer ay walang Settings, Dark mode lang sa footer.
 function refreshSettings() {
   var st = settingsNow();
   var show = !!(st && st.org);
   orgBox.hidden = !show;
-  if (!show) return;
-  anBtn.textContent = "\uD83D\uDCCA Analytics: " + (st.analytics ? "ON" : "OFF");
-  anBtn.disabled = !!st.locked;
-  anNote.textContent = st.locked
-    ? "Can only be changed between games."
-    : (st.analytics ? "Tap to turn off. Change it before starting a game." : "Tap to turn on. Change it before starting a game.");
+  setBtn.hidden = !show;
+  if (!show) {
+    setPanel.hidden = true;
+    setCaret.textContent = "\u25B4";
+    setBtn.setAttribute("aria-expanded", "false");
+    paintHint();
+    return;
+  }
+  paintSwitch(anSw, st.analytics, st.locked);
+  anNote.textContent = st.locked ? "Can only be changed between games." : "";
   topSel.value = String(st.topN);
+  paintHint();
 }
-anBtn.addEventListener("click", function () {
+anBtn.addEventListener("click", function (e) {
+  if (!e.isTrusted) return; // click na gawa ng script, balewalain
+  var st = settingsNow();
+  if (!st || !st.org || st.locked) return; // huwag magtiwala sa "disabled" ng button, tingnan ulit ang totoong state
   if (typeof window.__pbSet === "function") window.__pbSet("analytics");
 });
-topSel.addEventListener("change", function () {
+topSel.addEventListener("change", function (e) {
+  if (!e.isTrusted) return;
+  var st = settingsNow();
+  if (!st || !st.org) return;
   if (typeof window.__pbSet === "function") window.__pbSet("topn", topSel.value);
 });
 
 body.appendChild(toggle);
 body.appendChild(nav);
 
-// Isang button lang: ang icon ang nagpapakita ng kasalukuyang setting.
+// On = dark, Off = light.
 function paintTheme() {
-  var cur = currentTheme();
-  icon.textContent = cur === "dark" ? "\uD83C\uDF19" : "\u2600\uFE0F";
-  label.textContent = cur === "dark" ? "Dark" : "Light";
-  themeBtn.setAttribute(
-    "aria-label",
-    "Theme: " + label.textContent + ". Tap to switch to " + (cur === "dark" ? "light" : "dark") + "."
-  );
+  paintSwitch(themeSw, currentTheme() === "dark", false);
 }
 
 function setNav(open, remember) {
@@ -1351,8 +1412,9 @@ function setNav(open, remember) {
 function isOpen() { return body.classList.contains("nav-open"); }
 
 toggle.addEventListener("click", function () { setNav(!isOpen(), true); });
-themeBtn.addEventListener("click", function () {
-  setTheme(currentTheme() === "dark" ? "light" : "dark");
+themeBtn.addEventListener("click", function (e) {
+  if (!e.isTrusted) return; // click na gawa ng script, balewalain
+  setTheme(currentTheme() === "dark" ? "light" : "dark"); // setTheme ay may whitelist (cleanTheme)
 });
 // Sa phone: mag-close kapag nag-tap sa labas ng sidebar.
 document.addEventListener("click", function (e) {
