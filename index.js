@@ -9,7 +9,6 @@ var pollTimer = null, loadError = null, lastSync = "", statusText = "";
 var saving = false, dirty = false;
 var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
-var rebuildOpen = false, rebuildSel = { A: null, B: null };
 
 /* ---------- helpers ---------- */
 function esc(s) {
@@ -160,13 +159,21 @@ function beginGame(d) {
 function cancelSetup(d) {
   d.pending = null;
 }
-// Manual rebuild: palitan ang isang player sa Team A at isang player sa Team B sa susunod na laro.
-function swapTeammates(d, idA, idB) {
-  if (!d.next) return;
-  var ia = d.next.teamA.indexOf(idA), ib = d.next.teamB.indexOf(idB);
-  if (ia < 0 || ib < 0) return;
-  d.next.teamA[ia] = idB;
-  d.next.teamB[ib] = idA;
+// Rebuild: isang click, nagbabago ang teammates. Ang unang player ng Team A ay nananatili at umiikot ang kasama niya.
+// Halimbawa: P1 & P2 vs P3 & P4 -> P1 & P4 vs P2 & P3 -> P1 & P3 vs P4 & P2 -> balik sa simula.
+function rebuildTeams(d) {
+  if (!d.next || d.mode !== "doubles") return;
+  var A = d.next.teamA, B = d.next.teamB;
+  if (A.length !== 2 || B.length !== 2) return;
+  d.next.teamA = [A[0], B[1]];
+  d.next.teamB = [A[1], B[0]];
+}
+// Swap: magpapalit ng left at right ang dalawang player ng isang team sa kasalukuyang laro.
+function swapTeamSides(d, team) {
+  var c = d.current;
+  if (!c || c.done || d.mode !== "doubles") return;
+  ensurePos(c);
+  swapSides(c, team);
 }
 // Court positions: pos arrays are [rightPlayerId, leftPlayerId] from each team's own view.
 function ensurePos(c) {
@@ -509,7 +516,9 @@ function boardHtml(d, c) {
         '<button class="btn a grow" data-act="rally" data-team="A">Team A won the rally</button>' +
         '<button class="btn b grow" data-act="rally" data-team="B">Team B won the rally</button></div>' +
         '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="undo"' +
-        ((c.stack && c.stack.length) ? "" : " disabled") + '>↩ Undo</button></div>' +
+        ((c.stack && c.stack.length) ? "" : " disabled") + '>↩ Undo</button>' +
+        (dbl ? '<button class="btn sec sm" data-act="swap" data-team="A">🔄 Swap Team A</button>' +
+        '<button class="btn sec sm" data-act="swap" data-team="B">🔄 Swap Team B</button>' : "") + '</div>' +
         '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>';
     }
   }
@@ -523,19 +532,7 @@ function nextHtml(d) {
     h += '<div class="row"><button class="btn grow" data-act="setup"' + (d.current ? " disabled" : "") + '>▶ Start game</button>' +
       '<button class="btn sec" data-act="shuffle">🔀 Shuffle again</button></div>';
     if (d.mode === "doubles") {
-      h += '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="rebuild-toggle">' +
-        (rebuildOpen ? "✕ Close rebuild" : "🔧 Rebuild") + "</button></div>";
-      if (rebuildOpen) {
-        var pickBtns = function (ids, team) {
-          return ids.map(function (id) {
-            return '<button class="btn sm' + (rebuildSel[team] === id ? "" : " sec") + '" data-act="rebuild-pick" data-team="' + team +
-              '" data-id="' + esc(id) + '">' + esc(pname(id)) + "</button>";
-          }).join(" ");
-        };
-        h += '<p class="muted">Tap one player from Team A and one from Team B to swap them.</p>' +
-          '<p class="muted" style="margin-bottom:4px">TEAM A</p><div class="row">' + pickBtns(n.teamA, "A") + "</div>" +
-          '<p class="muted" style="margin:8px 0 4px">TEAM B</p><div class="row">' + pickBtns(n.teamB, "B") + "</div>";
-      }
+      h += '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="rebuild">🔧 Rebuild</button></div>';
     }
     if (d.current) h += '<p class="muted">The current game must finish before this one can start.</p>';
   }
@@ -757,18 +754,9 @@ function handle(act, ds) {
     case "serve-b": mutate(function (d) { resolveServeRally(d, "B"); }); break;
     case "serve-redo": mutate(function (d) { if (d.pending) { d.pending.winner = null; d.pending.phase = "serve"; } }); break;
     case "begin": warmupInputOpen = false; mutate(beginGame); break;
-    case "shuffle": rebuildSel = { A: null, B: null }; mutate(genNext); break;
-    case "rebuild-toggle": rebuildOpen = !rebuildOpen; rebuildSel = { A: null, B: null }; render(); break;
-    case "rebuild-pick":
-      rebuildSel[ds.team] = (rebuildSel[ds.team] === ds.id) ? null : ds.id;
-      if (rebuildSel.A && rebuildSel.B) {
-        var pa = rebuildSel.A, pb = rebuildSel.B;
-        rebuildSel = { A: null, B: null };
-        mutate(function (d) { swapTeammates(d, pa, pb); });
-      } else {
-        render();
-      }
-      break;
+    case "shuffle": mutate(genNext); break;
+    case "rebuild": mutate(rebuildTeams); break;
+    case "swap": mutate(function (d) { swapTeamSides(d, ds.team); }); break;
     case "rest": mutate(function (d) { toggleRest(d, ds.id); }); break;
     case "remove":
       if (data && inCurrent(data, ds.id)) { window.alert("This player is still in a game. Please wait until the game is finished."); break; }
