@@ -523,18 +523,28 @@ function boardHtml(d, c) {
   }
   return h;
 }
+function nextGridHtml(d, n) {
+  var cs = "text-align:center;padding:4px 10px;";
+  function cell(side, id) {
+    return '<td style="' + cs + '"><div class="muted">' + side + "</div><strong>" + esc(pname(id)) + "</strong></td>";
+  }
+  function btn(team) {
+    return isOrg ? '<td style="' + cs + '"><button class="btn sec sm" data-act="swap" data-team="' + team + '">🔄 Swap House</button></td>' : "";
+  }
+  var h = "";
+  if (isOrg) h += '<div class="row" style="margin-bottom:8px"><button class="btn sec sm" data-act="rebuild">🔧 Rebuild</button></div>';
+  h += '<table><tr><td style="' + cs + '">Team A</td>' + cell("Right", n.teamA[0]) + cell("Left", n.teamA[1]) + btn("A") + "</tr>" +
+    '<tr><td style="' + cs + '">Team B</td>' + cell("Left", n.teamB[1]) + cell("Right", n.teamB[0]) + btn("B") + "</tr></table>";
+  return h;
+}
 function nextHtml(d) {
   var n = d.next;
   if (!n) return '<p class="muted">At least ' + need(d) + " active players are needed to make a game.</p>";
   var h = '<p><strong>' + esc(teamNames(n.teamA)) + '</strong> <span class="muted">vs</span> <strong>' + esc(teamNames(n.teamB)) + "</strong></p>";
+  if (d.mode === "doubles") h = nextGridHtml(d, n);
   if (isOrg) {
     h += '<div class="row"><button class="btn grow" data-act="setup"' + (d.current ? " disabled" : "") + '>▶ Start game</button>' +
       '<button class="btn sec" data-act="shuffle">🔀 Shuffle again</button></div>';
-    if (d.mode === "doubles") {
-      h += '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="rebuild">🔧 Rebuild</button>' +
-        '<button class="btn sec sm" data-act="swap" data-team="A">🔄 Swap House</button>' +
-        '<button class="btn sec sm" data-act="swap" data-team="B">🔄 Swap House</button></div>';
-    }
     if (d.current) h += '<p class="muted">The current game must finish before this one can start.</p>';
   }
   return h;
