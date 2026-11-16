@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-inZJf4bDlIQm1E6D7ZO1DlLprUV+8ZNGeqaflF+LRVw='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-4uYFzN5r0NlejgijVvx6Oi3pFQC3b1N7tjzcrmR2sbU='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
 <title>Pickleball Open Play</title>
 <link rel="icon" href="data:,">
 <style>
@@ -84,6 +84,19 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .cpts{font-size:.66rem;font-weight:700;opacity:.95}
 .cc.tap{cursor:pointer;user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .cc.tap:active{filter:brightness(1.25)}
+.nav-side .btn + .btn{margin-top:8px}
+.nav-theme[hidden]{display:none}
+.top-modal{position:fixed;top:0;right:0;bottom:0;left:0;z-index:50;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:56px 12px 12px;overflow-y:auto}
+.top-modal[hidden]{display:none}
+.top-card{width:100%;max-width:520px;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:14px}
+.top-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.top-head h2{margin:0}
+.top-h{font-size:.95rem;margin:16px 0 6px}
+.top-list{margin:0;padding-left:24px}
+.top-row{padding:5px 0;border-bottom:1px solid var(--line)}
+.top-line{display:flex;justify-content:space-between;gap:10px}
+.top-name{font-weight:700;word-break:break-word}
+.top-val{color:var(--muted);font-size:.88rem;white-space:nowrap}
 .cband{background:#a9cbef;color:#1b2430;text-align:center;font-weight:800;padding:5px 0;border-top:1px solid #7da6d2}
 .callrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin:8px 0 4px}
 .callbox{border:2px solid var(--line);border-radius:10px;text-align:center;padding:5px 3px}
@@ -439,6 +452,50 @@ function parseNames(text) {
     if (s && !seen[s.toLowerCase()]) { seen[s.toLowerCase()] = 1; out.push(s); }
   });
   return out.slice(0, 60);
+}
+
+/* ---------- top stats (analytics) ---------- */
+// Kinukuwenta lang mula sa mga natapos na laro na nai-score habang ON ang Analytics. Ito lang ang ibinibigay sa navigation.
+function topStats(d) {
+  if (!d || !d.analytics) return null;
+  var P = Object.create(null), T = Object.create(null), games = 0;
+  function getP(n) { return P[n] || (P[n] = { name: n, pts: 0, rw: 0, w: 0, l: 0, diff: 0 }); }
+  function byName(a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; }
+  (d.history || []).forEach(function (m) {
+    if (num(m.tr) !== 1) return;
+    games++;
+    var sa = num(m.sa), sb = num(m.sb);
+    (Array.isArray(m.ps) ? m.ps : []).forEach(function (r) {
+      var p = getP(String(r[0]));
+      p.pts += num(r[1]);
+      p.rw += num(r[2]);
+    });
+    [[m.a, sa, sb], [m.b, sb, sa]].forEach(function (t) {
+      var names = Array.isArray(t[0]) ? t[0] : [], f = t[1], ag = t[2];
+      names.forEach(function (n) {
+        var p = getP(String(n));
+        if (f > ag) p.w++; else p.l++;
+        p.diff += f - ag;
+      });
+      if (d.mode === "doubles" && names.length === 2) {
+        var a1 = String(names[0]), a2 = String(names[1]);
+        var k = a1 < a2 ? a1 + " & " + a2 : a2 + " & " + a1;
+        var tm = T[k] || (T[k] = { name: k, w: 0, l: 0, diff: 0 });
+        if (f > ag) tm.w++; else tm.l++;
+        tm.diff += f - ag;
+      }
+    });
+  });
+  var pl = Object.keys(P).map(function (k) { return P[k]; });
+  function rank(a, b) { return b.w - a.w || b.diff - a.diff || byName(a, b); }
+  return {
+    games: games,
+    doubles: d.mode === "doubles",
+    scorers: pl.filter(function (p) { return p.pts > 0 || p.rw > 0; })
+      .sort(function (a, b) { return b.pts - a.pts || b.rw - a.rw || byName(a, b); }).slice(0, 5),
+    wins: pl.filter(function (p) { return p.w + p.l > 0; }).sort(rank).slice(0, 5),
+    teams: Object.keys(T).map(function (k) { return T[k]; }).sort(rank).slice(0, 5)
+  };
 }
 
 /* ---------- network ---------- */
@@ -1059,6 +1116,8 @@ function route() {
   loadSession();
 }
 window.addEventListener("hashchange", route);
+// Para sa "Top" sa navigation: kuwenta lang ang ibinibigay (null kung OFF ang Analytics), hindi ang buong data ng session.
+window.__pbTop = function () { return data ? topStats(data) : null; };
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
 route();
@@ -1129,6 +1188,15 @@ themeBtn.appendChild(label);
 
 nav.appendChild(el("div", "nav-title", "Menu"));
 nav.appendChild(themeBtn);
+
+// Ang "Top" ay lalabas lang kapag ON ang Analytics ng session.
+var topBtn = el("button", "btn sec nav-theme");
+topBtn.type = "button";
+topBtn.id = "top-btn";
+topBtn.hidden = true;
+topBtn.appendChild(el("span", "nav-icon", "\uD83C\uDFC6"));
+topBtn.appendChild(el("span", "nav-label", "Top"));
+nav.appendChild(topBtn);
 body.appendChild(toggle);
 body.appendChild(nav);
 
@@ -1165,6 +1233,83 @@ document.addEventListener("keydown", function (e) {
   if (e.key === "Escape" && isOpen()) setNav(false, false);
 });
 if (mq && mq.addEventListener) mq.addEventListener("change", paintTheme);
+
+// ---- Top (analytics) ----
+// Walang innerHTML: textContent lang ang gamit, kaya walang script injection.
+var topBox = el("div", "top-modal");
+topBox.hidden = true;
+topBox.setAttribute("role", "dialog");
+topBox.setAttribute("aria-modal", "true");
+topBox.setAttribute("aria-label", "Top");
+var topCard = el("div", "top-card");
+var topHead = el("div", "top-head");
+topHead.appendChild(el("h2", "", "\uD83C\uDFC6 Top"));
+var topClose = el("button", "btn sec sm", "\u2715");
+topClose.type = "button";
+topClose.setAttribute("aria-label", "Close");
+topHead.appendChild(topClose);
+var topBody = el("div", "top-body");
+topCard.appendChild(topHead);
+topCard.appendChild(topBody);
+topBox.appendChild(topCard);
+body.appendChild(topBox);
+
+function topRow(name, value) {
+  var li = el("li", "top-row");
+  var line = el("div", "top-line");
+  line.appendChild(el("span", "top-name", name));
+  line.appendChild(el("span", "top-val", value));
+  li.appendChild(line);
+  return li;
+}
+function topSection(title, rows, emptyText) {
+  var sec = el("div", "top-sec");
+  sec.appendChild(el("h3", "top-h", title));
+  if (!rows.length) { sec.appendChild(el("p", "muted", emptyText)); return sec; }
+  var ol = el("ol", "top-list");
+  rows.forEach(function (r) { ol.appendChild(r); });
+  sec.appendChild(ol);
+  return sec;
+}
+function signed(n) { return (n > 0 ? "+" : "") + n; }
+function fillTop(st) {
+  while (topBody.firstChild) topBody.removeChild(topBody.firstChild);
+  topBody.appendChild(el("p", "muted", st.games + (st.games === 1 ? " game" : " games") + " scored with Analytics ON."));
+  topBody.appendChild(topSection("\uD83C\uDFAF Top scorer", st.scorers.map(function (p) {
+    return topRow(p.name, p.pts + " pts \u2022 " + p.rw + " rallies");
+  }), "No points yet."));
+  topBody.appendChild(topSection("\uD83E\uDD47 Most wins", st.wins.map(function (p) {
+    return topRow(p.name, p.w + "W-" + p.l + "L (" + signed(p.diff) + ")");
+  }), "No games yet."));
+  if (st.doubles) {
+    topBody.appendChild(topSection("\uD83D\uDC65 Top team", st.teams.map(function (t) {
+      return topRow(t.name, t.w + "W-" + t.l + "L (" + signed(t.diff) + ")");
+    }), "No games yet."));
+  }
+}
+function topNow() {
+  try { return typeof window.__pbTop === "function" ? window.__pbTop() : null; } catch (e) { return null; }
+}
+// Sinusundan ang pagbabago ng page (live updates, toggle ng Analytics) para laging tama ang button at ang listahan.
+function refreshTop() {
+  var st = topNow();
+  topBtn.hidden = !st;
+  if (!st) { topBox.hidden = true; return; }
+  if (!topBox.hidden) fillTop(st);
+}
+topBtn.addEventListener("click", function () {
+  var st = topNow();
+  if (!st) return;
+  if (!(wide && wide.matches)) setNav(false, false);
+  fillTop(st);
+  topBox.hidden = false;
+});
+topClose.addEventListener("click", function () { topBox.hidden = true; });
+topBox.addEventListener("click", function (e) { if (e.target === topBox) topBox.hidden = true; });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") topBox.hidden = true; });
+var appEl = document.getElementById("app");
+if (appEl && window.MutationObserver) new MutationObserver(refreshTop).observe(appEl, { childList: true });
+refreshTop();
 
 // Simula: bukas sa desktop (o ayon sa huling pinili), sarado sa phone.
 var s = savedNav();
