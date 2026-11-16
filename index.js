@@ -16,6 +16,7 @@ var uiTick = null, warmupInputOpen = false;
 var holdUntil = 0, holdTimer = null, cachedMode = false;
 var pickPid = null; // ang player na na-tap at hinihintay ang source (hindi ito sine-save)
 var homeView = "new"; // anong card ang ipapakita sa home: "new", "join" o "mine" (whitelist, tingnan ang __pbHome)
+var cuAsk = null, cuInfo = null; // modal ng catch-up setting: {kind:"add",names:[...]} o {kind:"back",id}; at kung aling ⓘ ang bukas (hindi ito sine-save)
 // ====== LISTAHAN NG SOURCE NG SCORE ======
 // Para magdagdag: isang linya lang ["key", "Label"]. Ang key ay a-z at _ lang, hanggang 16 na letra.
 var SOURCES = [
@@ -89,9 +90,22 @@ function makeData(name, mode, target, names) {
 }
 function need(d) { return d.mode === "doubles" ? 4 : 2; }
 function activePlayers(d) { return d.players.filter(function (p) { return p.active; }); }
+// Hindi kasama sa "lowest" ang mga catch-up player (kung hindi, 0 ang lowest at 0 din ang susunod na bagong player).
 function minGames(d) {
-  var a = activePlayers(d);
+  var all = activePlayers(d);
+  var a = all.filter(function (p) { return p.cu !== true; });
+  if (!a.length) a = all;
   return a.length ? Math.min.apply(null, a.map(function (p) { return num(p.games); })) : 0;
+}
+// Per-player catch-up. Style "a": alternate lang (laktaw ng 1 game). Style "b": kung 3+ games ang layo niya, tuloy-tuloy; kung 1-2 na lang, alternate.
+function cuReady(d, p, round) {
+  if (p.cm === "b" && minGames(d) - num(p.games) >= 3) return true;
+  return !p.last || round - num(p.last) >= 2;
+}
+// Kapag naabot na ng catch-up player ang lowest, tatanggalin ang flag at balik siya sa normal na rotation.
+function clearCaught(d) {
+  var mg = minGames(d);
+  activePlayers(d).forEach(function (p) { if (p.cu === true && num(p.games) >= mg) p.cu = false; });
 }
 function validNext(d) {
   var n = d.next;
@@ -117,11 +131,26 @@ function genNext(d) {
   var k = need(d);
   var act = activePlayers(d);
   if (act.length < k) { d.next = null; return; }
+  var useCu = true; // per-player na ang catch-up: kung walang catch-up na player, normal na rotation ang lalabas
+  var rnd = num(d.round) + 1; // round ng larong ito
+  if (useCu) clearCaught(d);
   var pool = act.map(function (p) { return { p: p, r: Math.random() }; })
     .sort(function (x, y) {
       return num(x.p.games) - num(y.p.games) || num(x.p.last) - num(y.p.last) || x.r - y.r;
     }).map(function (x) { return x.p; });
-  var c = pool.slice(0, k), A, B;
+  var c, A, B;
+  if (useCu) {
+    // Unahin ang mga catch-up na handa na (hanggang kalahati ng slots), ang iba ay galing sa normal na rotation.
+    var cuAll = pool.filter(function (p) { return p.cu === true; });
+    var regs = pool.filter(function (p) { return p.cu !== true; });
+    var ready = cuAll.filter(function (p) { return cuReady(d, p, rnd); });
+    var pick = ready.slice(0, Math.floor(k / 2));
+    c = pick.concat(regs.slice(0, k - pick.length));
+    // Kung kulang ang regular, dagdagan ng ibang catch-up para laging may mabuong game.
+    cuAll.forEach(function (p) { if (c.length < k && c.indexOf(p) < 0) c.push(p); });
+  } else {
+    c = pool.slice(0, k);
+  }
   if (k === 2) {
     A = [c[0].id]; B = [c[1].id];
   } else {
@@ -319,23 +348,39 @@ function finish(d) {
   d.current = null;
   ensureNext(d);
 }
-function addPlayers(d, names) {
+// cm = setting ng bagong player: "l" (lowest games), "a" (Style A) o "b" (Style B). Whitelist lang.
+function addPlayers(d, names, cm) {
+  cm = cm === "a" || cm === "b" ? cm : "l";
   var have = {};
   d.players.forEach(function (p) { have[p.name.toLowerCase()] = 1; });
   var mg = minGames(d);
   names.forEach(function (n) {
     if (!have[n.toLowerCase()]) {
       have[n.toLowerCase()] = 1;
-      d.players.push({ id: uid(), name: n, games: mg, last: num(d.round), active: true });
+      // Style A/B: totoong 0 ang games at hahabulin ng system. "l" (o wala pang laro): lowest games ang record.
+      var cu = cm !== "l" && mg > 0;
+      var np = { id: uid(), name: n, games: cu ? 0 : mg, last: cu ? 0 : num(d.round), active: true, cu: cu };
+      if (mg > 0) np.cm = cm; // para sa listahan sa Settings
+      d.players.push(np);
     }
   });
   ensureNext(d);
 }
-function toggleRest(d, id) {
+// cm = setting kapag bumalik galing rest: "l" (lowest games), "a" o "b". Whitelist lang.
+function toggleRest(d, id, cm) {
+  cm = cm === "a" || cm === "b" ? cm : "l";
+  var mg = minGames(d); // lowest ng mga aktibo bago magbago ang status
   d.players.forEach(function (p) {
-    if (p.id === id) {
-      p.active = !p.active;
-      if (p.active) p.games = Math.max(num(p.games), minGames(d));
+    if (p.id !== id) return;
+    p.active = !p.active;
+    if (!p.active) return;
+    var behind = num(p.games) < mg;
+    if (behind) p.cm = cm; // para sa listahan sa Settings
+    if (behind && cm !== "l") {
+      p.cu = true; // itatago ang totoong games niya, hahabulin ng system
+    } else {
+      p.cu = false;
+      p.games = Math.max(num(p.games), mg);
     }
   });
   ensureNext(d);
@@ -639,6 +684,42 @@ function pickerHtml(d) {
   });
   return h + '</div><div class="row" style="margin-top:10px;justify-content:center"><button class="btn sec sm" data-act="pick-cancel">Wrong player? Go back</button></div></div></div>';
 }
+// Mga opsyon ng catch-up setting. Fixed na listahan (whitelist), walang galing sa labas.
+var CU_OPTS = [
+  ["l", "Lowest games", "Starts at the lowest games count of the active players, so the rotation is balanced right away. The record will show games that were not actually played."],
+  ["a", "Style A: Alternate", "Keeps the real games count. The system catches the player up quietly: play, skip 1 game, play again, until reaching the lowest."],
+  ["b", "Style B: Fast, then alternate", "Keeps the real games count. While 3 or more games behind, the player plays every game. Once 1-2 games behind, alternate (skip 1 game) until reaching the lowest."]
+];
+// Nakita na ba ng organizer ang ⓘ? Kapag oo, mawawala ang arrow hint.
+function cuSeen() {
+  try { return localStorage.getItem("pb_cuinfo") === "1"; } catch (e) { return true; }
+}
+// Modal para sa setting ng bagong player o ng bumalik galing rest. esc() ang pangalan.
+function cuModalHtml(d) {
+  var ask = cuAsk, who, sub;
+  if (ask.kind === "add") {
+    if (!ask.names.length) return "";
+    who = ask.names[0];
+    sub = ask.names.length > 1 ? "New player 1 of " + ask.names.length : "New player";
+  } else {
+    var bp = d.players.filter(function (x) { return x.id === ask.id; })[0];
+    if (!bp) return "";
+    who = bp.name;
+    sub = "Back from rest \u2022 " + num(bp.games) + " games";
+  }
+  var h = '<div class="pick-modal"><div class="pick" role="dialog" aria-modal="true" aria-label="Catch-up setting">' +
+    '<div class="pick-title">' + esc(who) + "</div>" +
+    '<p class="muted center" style="margin:0 0 10px">' + esc(sub) + " \u2022 lowest games now: " + minGames(d) + ". Choose a setting:</p>";
+  if (!cuSeen()) h += '<div class="hint hint-info">Tap \u24D8 to read what each setting means.</div>';
+  CU_OPTS.forEach(function (o) {
+    var open = cuInfo === o[0];
+    h += '<div class="cu-opt"><button class="btn sec grow" data-act="cu-pick" data-cm="' + esc(o[0]) + '">' + esc(o[1]) + "</button>" +
+      '<button class="info-btn" data-act="cu-info" data-cm="' + esc(o[0]) + '" aria-label="What does ' + esc(o[1]) + ' mean?" aria-expanded="' + (open ? "true" : "false") + '">\u24D8</button></div>' +
+      (open ? '<p class="cu-info">' + esc(o[2]) + "</p>" : "");
+  });
+  return h + '<div class="row" style="margin-top:10px;justify-content:center"><button class="btn sec sm" data-act="cu-cancel">' +
+    (ask.kind === "add" ? "Cancel (do not add)" : "Cancel (stay resting)") + "</button></div></div></div>";
+}
 function callHtml(d, c) {
   var srv = c.server === "A" ? num(c.scoreA) : num(c.scoreB);
   var rcv = c.server === "A" ? num(c.scoreB) : num(c.scoreA);
@@ -863,6 +944,7 @@ function renderSession() {
     "<li><strong>Kitchen:</strong> no volleying while standing in the kitchen.</li>" +
     "</ul></details></div>";
   // Ang "Create a new session" ay nasa nav na (Sessions > New session), kaya wala na rito.
+  if (isOrg && cuAsk) h += cuModalHtml(d);
   $app.innerHTML = h;
 }
 
@@ -955,18 +1037,56 @@ function handle(act, ds) {
     case "shuffle": mutate(genNext); break;
     case "rebuild": mutate(rebuildTeams); break;
     case "swap": mutate(function (d) { swapTeamSides(d, ds.team); }); break;
-    case "rest": mutate(function (d) { toggleRest(d, ds.id); }); break;
+    case "rest":
+      if (!isOrg || !data) break;
+      var rp = data.players.filter(function (x) { return x.id === ds.id; })[0];
+      if (!rp) break;
+      // Bumalik galing rest at kulang ang games: magtatanong muna kung anong setting ang gagamitin.
+      if (!rp.active && num(rp.games) < minGames(data)) { cuAsk = { kind: "back", id: rp.id }; cuInfo = null; render(); }
+      else mutate(function (d) { toggleRest(d, ds.id, "l"); });
+      break;
+    case "cu-pick":
+      if (!isOrg || !data || !cuAsk) break;
+      var cm = ds.cm === "a" || ds.cm === "b" ? ds.cm : "l"; // whitelist
+      var ask = cuAsk;
+      cuInfo = null;
+      if (ask.kind === "add" && ask.names.length) {
+        var nm = ask.names.shift();
+        if (!ask.names.length) cuAsk = null; // ito na ang huli sa pila
+        mutate(function (d) { addPlayers(d, [nm], cm); });
+      } else if (ask.kind === "back") {
+        var rid = ask.id;
+        cuAsk = null;
+        mutate(function (d) { toggleRest(d, rid, cm); });
+      }
+      break;
+    case "cu-info":
+      var ik = ds.cm === "a" || ds.cm === "b" || ds.cm === "l" ? ds.cm : null; // whitelist
+      cuInfo = ik && cuInfo !== ik ? ik : null;
+      try { localStorage.setItem("pb_cuinfo", "1"); } catch (err) {} // mawawala na ang arrow hint
+      render();
+      break;
+    case "cu-cancel": cuAsk = null; cuInfo = null; render(); break;
     case "remove":
       if (data && inCurrent(data, ds.id)) { window.alert("This player is still in a game. Please wait until the game is finished."); break; }
       if (window.confirm("Remove this player?")) mutate(function (d) { removePlayer(d, ds.id); });
       break;
     case "add":
+      if (!isOrg || !data) break;
       var names = parseNames($("f-add").value);
-      if (names.length) mutate(function (d) { addPlayers(d, names); });
+      if (!names.length) break;
+      var have = {};
+      data.players.forEach(function (p) { have[p.name.toLowerCase()] = 1; });
+      var fresh = names.filter(function (n) { return !have[n.toLowerCase()]; });
+      if (!fresh.length) break;
+      // May nakalaro na: magtatanong muna ng setting ng bawat bagong player. Wala pa: diretso na.
+      if (minGames(data) > 0) { cuAsk = { kind: "add", names: fresh }; cuInfo = null; render(); }
+      else mutate(function (d) { addPlayers(d, fresh, "l"); });
       break;
   }
 }
 document.addEventListener("click", function (e) {
+  if (!e.isTrusted) return; // click na gawa ng script, balewalain
   var b = e.target.closest ? e.target.closest("[data-act]") : null;
   if (!b || b.tagName === "SELECT") return;
   handle(b.dataset.act, b.dataset);
@@ -1032,7 +1152,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null;
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
@@ -1094,7 +1214,12 @@ window.__pbHome = function (view) {
 // Para sa Settings sa navigation: hugis lang ng settings ang ibinibigay, hindi ang buong session.
 window.__pbSettings = function () {
   if (!data) return null;
-  return { org: isOrg, analytics: !!data.analytics, topN: cleanTopN(data.topN), locked: !!data.current };
+  return {
+    org: isOrg, analytics: !!data.analytics, topN: cleanTopN(data.topN), locked: !!data.current,
+    // Listahan lang ng mga player na may piniling catch-up setting (display lang).
+    cuList: data.players.filter(function (p) { return p.cm === "l" || p.cm === "a" || p.cm === "b"; })
+      .map(function (p) { return { name: String(p.name), cm: p.cm, cu: p.cu === true, active: p.active !== false }; })
+  };
 };
 // Organizer lang ang makakapagbago (mutate ay tumitingin sa isOrg). Whitelist ang "what" at ang value.
 window.__pbSet = function (what, val) {
@@ -1319,6 +1444,14 @@ orgBox.appendChild(anBtn);
 orgBox.appendChild(anNote);
 orgBox.appendChild(topLabel);
 orgBox.appendChild(topSel);
+
+// Listahan lang (display): settings ng mga bagong player at ng mga bumalik galing rest.
+// Ang pagpili ay sa modal kapag nag-add o nag-Back. textContent lang ang gamit.
+var cuHelp = el("p", "muted");
+var cuList = el("ul", "cu-list");
+orgBox.appendChild(el("div", "nav-title set-gap", "New / returning players"));
+orgBox.appendChild(cuHelp);
+orgBox.appendChild(cuList);
 setPanel.appendChild(orgBox);
 
 var setBtn = el("button", "btn sec nav-theme");
@@ -1377,6 +1510,20 @@ function refreshSettings() {
   paintSwitch(anSw, st.analytics, st.locked);
   anNote.textContent = st.locked ? "Can only be changed between games." : "";
   topSel.value = String(st.topN);
+  // Listahan ng catch-up settings. textContent lang, at whitelist ang label.
+  var cuItems = Array.isArray(st.cuList) ? st.cuList : [];
+  cuHelp.textContent = cuItems.length
+    ? "Chosen when a player is added or comes back from rest."
+    : "No new or returning players yet.";
+  while (cuList.firstChild) cuList.removeChild(cuList.firstChild);
+  cuItems.forEach(function (it) {
+    var label = it.cm === "a" ? "Style A" : it.cm === "b" ? "Style B" : "Lowest games";
+    var state = !it.active ? "resting" : it.cu ? "catching up" : (it.cm === "l" ? "" : "caught up");
+    var li = el("li", "");
+    li.appendChild(el("span", "", String(it.name)));
+    li.appendChild(el("span", "muted", label + (state ? " \u2022 " + state : "")));
+    cuList.appendChild(li);
+  });
   paintHint();
 }
 anBtn.addEventListener("click", function (e) {
@@ -1391,6 +1538,7 @@ topSel.addEventListener("change", function (e) {
   if (!st || !st.org) return;
   if (typeof window.__pbSet === "function") window.__pbSet("topn", topSel.value);
 });
+// (walang listener ang listahan ng catch-up, display lang ito)
 
 body.appendChild(toggle);
 body.appendChild(nav);

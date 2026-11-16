@@ -100,6 +100,14 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .sw-row.on .sw-state{color:var(--text)}
 .sw-row:disabled{opacity:.45;cursor:not-allowed}
 .sw-row:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+.cu-opt{display:flex;gap:8px;align-items:center;margin:8px 0 0}
+.info-btn{appearance:none;flex:0 0 auto;width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--a);font-size:1.3rem;line-height:1;cursor:pointer}
+.info-btn:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+.cu-info{margin:6px 0 0;padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--line);font-size:.88rem}
+.hint-info{margin:0 0 12px;text-align:left}
+.hint-info::after{content:"";position:absolute;bottom:-8px;right:12px;border:8px solid transparent;border-bottom:0;border-top-color:var(--a)}
+.cu-list{margin:6px 0 0;padding:0;list-style:none}
+.cu-list li{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--line);font-size:.85rem}
 .nav-foot .sw-row{margin-top:8px}
 @media (prefers-reduced-motion:reduce){.sw-track,.sw-knob{transition:none}}
 .top-modal{position:fixed;top:0;right:0;bottom:0;left:0;z-index:50;background:rgba(0,0,0,.55);display:flex;align-items:flex-start;justify-content:center;padding:56px 12px 12px;overflow-y:auto}
@@ -182,6 +190,6 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 <body>
 <div id="app"><p class="muted">Loading...</p></div>
 <noscript>JavaScript is required for this page to work.</noscript>
-<script src="index.js?v=4"></script>
+<script src="index.js?v=5"></script>
 </body>
 </html>
