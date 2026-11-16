@@ -806,7 +806,8 @@ document.addEventListener("change", function (e) {
 document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); } });
 
 /* ---------- bantay sa paulit-ulit na reload (viewer lang) ---------- */
-// Hanggang `max` na load lang kada 60 segundo (3 sa viewer, 5 sa organizer). Sumobra? May countdown muna.
+// Hanggang 3 reloads kada 60 segundo, para sa viewer at organizer. Sumobra? May countdown muna.
+var MAX_RELOADS = 3;
 function reloadGuard(max) {
   try {
     var now = Date.now();
@@ -834,18 +835,13 @@ function toast(text) {
   clearTimeout(toast.t);
   toast.t = setTimeout(function () { el.style.display = "none"; }, 3500);
 }
-// Viewer lang: huwag payagan ang F5 / Ctrl+R / Cmd+R dahil awtomatiko namang nag-a-update ang page.
-document.addEventListener("keydown", function (e) {
-  if (!sid || !data) return;
-  var k = String(e.key || "").toLowerCase();
-  if (k === "f5" || ((e.ctrlKey || e.metaKey) && k === "r")) {
-    e.preventDefault();
-    toast(isOrg ? "Your changes are saved automatically. No need to reload." : "The score updates automatically. No need to reload.");
-  }
-});
+// Walang pagharang sa F5 / Ctrl+R. Ang limit ay hahawakan ng reloadGuard (3 reloads kada 60 segundo).
 
 /* ---------- routing ---------- */
+var firstRoute = true; // ang unang route() ay ang mismong pag-load o reload ng page
 function route() {
+  var isPageLoad = firstRoute;
+  firstRoute = false;
   stopLive();
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
@@ -857,7 +853,7 @@ function route() {
   key = m[2] || (loadKeys()[sid] || {}).key || null;
   if (m[2]) saveKey(sid, m[2]);
   isOrg = !!key;
-  var wait = reloadGuard(isOrg ? 5 : 3);
+  var wait = isPageLoad ? reloadGuard(MAX_RELOADS + 1) : 0; // 1 bukas + 3 reloads
   if (wait > 0) { holdUntil = Date.now() + wait * 1000; holdTick(); return; }
   loadSession();
 }
