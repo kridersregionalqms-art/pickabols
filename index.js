@@ -14,7 +14,7 @@ var pollTimer = null, loadError = null, lastSync = "", statusText = "";
 var saving = false, dirty = false;
 var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
-var holdUntil = 0, holdTimer = null;
+var holdUntil = 0, holdTimer = null, cachedMode = false;
 
 /* ---------- helpers ---------- */
 function esc(s) {
@@ -43,6 +43,16 @@ function teamNames(ids) { return ids.map(pname).join(" & "); }
 function okData(d) {
   return !!d && typeof d === "object" && Array.isArray(d.players) && Array.isArray(d.history) &&
     (d.mode === "doubles" || d.mode === "singles");
+}
+// Huling kopya ng session sa tab na ito, para magamit pa rin ang app kapag sobra na sa reload limit.
+function cacheSave() {
+  try { if (sid && data) sessionStorage.setItem("pb_cache_" + sid, JSON.stringify({ v: version, d: data })); } catch (e) {}
+}
+function cacheLoad() {
+  try {
+    var c = JSON.parse(sessionStorage.getItem("pb_cache_" + sid) || "null");
+    return c && okData(c.d) ? c : null;
+  } catch (e) { return null; }
 }
 
 /* ---------- game logic ---------- */
@@ -311,6 +321,7 @@ async function persist() {
       if (!r.ok) throw new Error(String(r.status));
       var j = await r.json();
       version = j.version;
+      cacheSave();
     } while (dirty);
     setStatus("✓ Saved");
   } catch (e) {
@@ -324,6 +335,7 @@ async function persist() {
 function mutate(fn) {
   if (!isOrg || !data) return;
   fn(data);
+  cacheSave();
   render();
   persist();
 }
@@ -339,6 +351,7 @@ async function loadSession() {
     if (!okData(j.data)) throw new Error("bad data");
     data = j.data;
     version = j.version;
+    cacheSave();
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
     render();
@@ -355,7 +368,7 @@ async function pollOnce() {
     if (!r.ok) return;
     var j = await r.json();
     lastSync = new Date().toLocaleTimeString();
-    if (j.version !== version && okData(j.data)) { version = j.version; data = j.data; render(); }
+    if (j.version !== version && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
   } catch (e) {}
 }
@@ -636,6 +649,7 @@ function renderSession() {
   var base = location.origin + location.pathname;
   var h = "";
   h += "<h1>🏓 " + esc(d.name || "Open Play") + "</h1>";
+  if (cachedMode) h += '<p class="muted" id="cachenote">' + esc(cacheNoteText()) + "</p>";
   h += '<p class="muted">' + (dbl ? "Doubles" : "Singles") + " • Play to " + num(d.target) + " • Code <strong>" + esc(sid) + "</strong></p>";
   if (isOrg) {
     h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Saved") + "</p>";
@@ -818,14 +832,25 @@ function reloadGuard(max) {
   } catch (e) {}
   return 0;
 }
-function holdTick() {
+function cacheNoteText() {
+  var left = Math.max(0, Math.ceil((holdUntil - Date.now()) / 1000));
+  return isOrg
+    ? "⏳ Too many reloads. Showing your last copy. Everything still works and your changes are saved."
+    : "⏳ Too many reloads. Showing the last copy. Live updates resume in " + left + " seconds.";
+}
+// Sobra sa limit: gamitin pa rin ang app gamit ang huling kopya, at ipagpaliban lang ang koneksyon sa server.
+function cacheTick() {
   clearTimeout(holdTimer);
   var left = Math.ceil((holdUntil - Date.now()) / 1000);
-  if (left <= 0) { loadSession(); return; }
-  $app.innerHTML = '<h1>🏓 Pickleball Open Play</h1><div class="card"><p><strong>' +
-    (isOrg ? "Your changes are saved automatically." : "The scoreboard updates automatically.") + "</strong> No need to reload.</p>" +
-    '<p class="muted">Opening again in ' + left + " seconds...</p></div>";
-  holdTimer = setTimeout(holdTick, 1000);
+  if (left <= 0) {
+    cachedMode = false;
+    if (!isOrg) { pollOnce(); startLive(); }
+    render();
+    return;
+  }
+  var el = $("cachenote");
+  if (el) el.textContent = cacheNoteText();
+  holdTimer = setTimeout(cacheTick, 1000);
 }
 function toast(text) {
   var el = document.getElementById("toast");
@@ -846,7 +871,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false;
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
@@ -854,7 +879,19 @@ function route() {
   if (m[2]) saveKey(sid, m[2]);
   isOrg = !!key;
   var wait = isPageLoad ? reloadGuard(MAX_RELOADS + 1) : 0; // 1 bukas + 3 reloads
-  if (wait > 0) { holdUntil = Date.now() + wait * 1000; holdTick(); return; }
+  if (wait > 0) {
+    var cached = cacheLoad();
+    if (cached) {
+      // Sobra sa limit: ipakita ang huling kopya para magamit pa rin ang app. Walang request sa server hanggang matapos ang countdown.
+      data = cached.d;
+      version = cached.v;
+      cachedMode = true;
+      holdUntil = Date.now() + wait * 1000;
+      render();
+      cacheTick();
+      return;
+    }
+  }
   loadSession();
 }
 window.addEventListener("hashchange", route);
