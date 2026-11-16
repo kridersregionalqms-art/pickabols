@@ -107,7 +107,14 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .wtime{font-size:2.4rem;font-weight:800;margin-top:2px}
 .cl{font-size:.62rem;font-weight:800;color:var(--muted);letter-spacing:.04em}
 .cn{font-size:1.4rem;font-weight:800;line-height:1.1}
-.pick{border:2px solid var(--a);border-radius:12px;padding:10px;margin-top:12px;background:var(--bg)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.saving [data-act="rally"],.saving [data-act="undo"],.saving [data-act="save"],.saving .cc.tap{pointer-events:none;position:relative}
+.saving [data-act="rally"],.saving [data-act="undo"],.saving [data-act="save"]{opacity:.75}
+.saving [data-act="rally"]::after,.saving [data-act="undo"]::after,.saving [data-act="save"]::after{content:"";position:absolute;top:50%;right:10px;width:16px;height:16px;margin-top:-8px;border:3px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+.saving .cc.tap::after{content:"";position:absolute;top:6px;right:6px;width:14px;height:14px;border:3px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+@media (prefers-reduced-motion:reduce){.saving [data-act]::after,.saving .cc.tap::after{animation-duration:2s}}
+.pick-modal{position:fixed;top:0;right:0;bottom:0;left:0;z-index:60;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:12px;overflow-y:auto}
+.pick{width:100%;max-width:460px;border:2px solid var(--a);border-radius:14px;padding:14px;background:var(--card);color:var(--text);box-shadow:0 12px 40px rgba(0,0,0,.5)}
 .pick-title{font-weight:800;text-align:center;margin-bottom:8px;word-break:break-word}
 .pick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
 .nav-sub{margin:6px 0 0 12px;padding-left:8px;border-left:2px solid var(--line)}
@@ -115,6 +122,8 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .nav-sub .btn{font-size:.9rem}
 .nav-sub .btn.on{border-color:var(--a);color:var(--a)}
 .nav-caret{margin-left:auto}
+.nav-side{overflow-y:auto}
+.nav-sub.long{max-height:45vh;overflow-y:auto}
 @media (max-width:420px){
   #app{padding:8px 8px 28px}
   .card{padding:10px;margin:8px 0}
@@ -547,15 +556,24 @@ async function persist() {
   if (!isOrg || !data) return;
   if (saving) { dirty = true; return; }
   saving = true;
+  document.body.classList.add("saving");
   setStatus("Saving...");
   try {
     do {
       dirty = false;
-      var r = await fetch(API + "/api/sessions/" + sid, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
-        body: JSON.stringify({ data: data })
-      });
+      var ctl = new AbortController();
+      var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+      var r;
+      try {
+        r = await fetch(API + "/api/sessions/" + sid, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
+          body: JSON.stringify({ data: data }),
+          signal: ctl.signal
+        });
+      } finally {
+        clearTimeout(tmo);
+      }
       if (r.status === 403) throw new Error("403");
       if (!r.ok) throw new Error(String(r.status));
       var j = await r.json();
@@ -569,6 +587,7 @@ async function persist() {
       : "⚠ Not saved. Click here to retry");
   } finally {
     saving = false;
+    document.body.classList.remove("saving");
   }
 }
 function mutate(fn) {
@@ -746,11 +765,12 @@ function courtHtml(d, c) {
 }
 // Lalabas kapag na-tap ng organizer ang player: pumili ng source ng score.
 function pickerHtml(d) {
-  var h = '<div class="pick"><div class="pick-title">' + esc(pname(pickPid)) + ' won the rally. How?</div><div class="pick-grid">';
+  var h = '<div class="pick-modal"><div class="pick" role="dialog" aria-modal="true" aria-label="How did the player score?">' +
+    '<div class="pick-title">' + esc(pname(pickPid)) + ' won the rally. How?</div><div class="pick-grid">';
   SOURCES.forEach(function (s) {
     h += '<button class="btn sec" data-act="pick" data-src="' + esc(s[0]) + '">' + esc(s[1]) + "</button>";
   });
-  return h + '</div><div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="pick-cancel">Cancel</button></div></div>';
+  return h + '</div><div class="row" style="margin-top:10px;justify-content:center"><button class="btn sec sm" data-act="pick-cancel">Wrong player? Go back</button></div></div></div>';
 }
 function callHtml(d, c) {
   var srv = c.server === "A" ? num(c.scoreA) : num(c.scoreB);
@@ -1175,6 +1195,32 @@ function route() {
 window.addEventListener("hashchange", route);
 // Para sa "Top" sa navigation: kuwenta lang ang ibinibigay (null kung OFF ang Analytics), hindi ang buong data ng session.
 window.__pbTop = function () { return data ? topStats(data) : null; };
+// Para sa "Best" sa navigation: ranking bawat source ng score. Null kung OFF ang Analytics.
+function bestStats(d) {
+  if (!d || !d.analytics) return null;
+  var tot = Object.create(null), games = 0, lists = Object.create(null);
+  SOURCES.forEach(function (s) { tot[s[0]] = Object.create(null); });
+  (d.history || []).forEach(function (m) {
+    if (num(m.tr) !== 1) return;
+    games++;
+    (Array.isArray(m.sc) ? m.sc : []).forEach(function (r) {
+      if (!Array.isArray(r)) return;
+      var k = srcKey(r[1]);
+      if (!k) return;
+      var n = String(r[0]);
+      tot[k][n] = num(tot[k][n]) + num(r[2]);
+    });
+  });
+  SOURCES.forEach(function (s) {
+    var o = tot[s[0]];
+    lists[s[0]] = Object.keys(o).map(function (n) { return { name: n, n: o[n] }; })
+      .filter(function (x) { return x.n > 0; })
+      .sort(function (a, b) { return b.n - a.n || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); })
+      .slice(0, 5);
+  });
+  return { games: games, sources: SOURCES.map(function (s) { return [s[0], s[1]]; }), lists: lists };
+}
+window.__pbBest = function () { return data ? bestStats(data) : null; };
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
 route();
@@ -1276,6 +1322,30 @@ TOP_ITEMS.forEach(function (it) {
   topSub.appendChild(b);
 });
 nav.appendChild(topSub);
+
+// "Best": lalabas lang kapag ON ang Analytics. Ang sub-nav ay hinuhubog mula sa SOURCES (tingnan ang refreshBest).
+var bestBtn = el("button", "btn sec nav-theme");
+bestBtn.type = "button";
+bestBtn.id = "best-btn";
+bestBtn.hidden = true;
+bestBtn.setAttribute("aria-expanded", "false");
+bestBtn.appendChild(el("span", "nav-icon", "\u2B50"));
+bestBtn.appendChild(el("span", "nav-label", "Best"));
+var bestCaret = el("span", "nav-icon nav-caret", "\u25BE");
+bestBtn.appendChild(bestCaret);
+nav.appendChild(bestBtn);
+var bestSub = el("div", "nav-sub long");
+bestSub.hidden = true;
+nav.appendChild(bestSub);
+var bestBtns = Object.create(null);
+var bestKey = null;
+var bestBuilt = "";
+bestBtn.addEventListener("click", function () {
+  if (!bestNow()) return;
+  bestSub.hidden = !bestSub.hidden;
+  bestCaret.textContent = bestSub.hidden ? "\u25BE" : "\u25B4";
+  bestBtn.setAttribute("aria-expanded", bestSub.hidden ? "false" : "true");
+});
 body.appendChild(toggle);
 body.appendChild(nav);
 
@@ -1364,6 +1434,9 @@ function paintSub() {
   Object.keys(subBtns).forEach(function (k) {
     subBtns[k].classList.toggle("on", !topBox.hidden && k === topKind);
   });
+  Object.keys(bestBtns).forEach(function (k) {
+    bestBtns[k].classList.toggle("on", !topBox.hidden && k === bestKey);
+  });
 }
 // Isang listahan lang ang ipinapakita sa modal, ayon sa pinili sa sub-navigation.
 function fillTop(st, kind) {
@@ -1395,12 +1468,77 @@ function topNow() {
 function closeTop() {
   topBox.hidden = true;
   topKind = null;
+  bestKey = null;
   paintSub();
+}
+function bestNow() {
+  try { return typeof window.__pbBest === "function" ? window.__pbBest() : null; } catch (e) { return null; }
+}
+// Whitelist: ibinabalik lang ang label kung ang key ay nasa listahan ng sources, kung hindi ay null.
+function srcLabel(st, key) {
+  if (typeof key !== "string") return null;
+  for (var i = 0; i < st.sources.length; i++) if (st.sources[i][0] === key) return st.sources[i][1];
+  return null;
+}
+function fillBest(st, key) {
+  var label = srcLabel(st, key);
+  if (label === null) return;
+  while (topBody.firstChild) topBody.removeChild(topBody.firstChild);
+  topTitle.textContent = "\u2B50 Best in " + label;
+  topBody.appendChild(el("p", "muted", st.games + (st.games === 1 ? " game" : " games") + " scored with Analytics ON."));
+  var rows = (st.lists[key] || []).map(function (p) {
+    return topRow(p.name, p.n + (p.n === 1 ? " time" : " times"));
+  });
+  topBody.appendChild(topList(rows, "Nobody yet."));
+}
+function openBest(key) {
+  var st = bestNow();
+  if (!st || srcLabel(st, key) === null) return;
+  topKind = null;
+  bestKey = key;
+  if (!(wide && wide.matches)) setNav(false, false);
+  fillBest(st, key);
+  topBox.hidden = false;
+  paintSub();
+}
+function refreshBest() {
+  var st = bestNow();
+  bestBtn.hidden = !st;
+  if (!st) {
+    bestSub.hidden = true;
+    bestCaret.textContent = "\u25BE";
+    bestBtn.setAttribute("aria-expanded", "false");
+    while (bestSub.firstChild) bestSub.removeChild(bestSub.firstChild);
+    bestBtns = Object.create(null);
+    bestBuilt = "";
+    bestKey = null;
+    return;
+  }
+  // Binubuo ulit ang sub-nav kapag nagbago ang listahan ng SOURCES.
+  var sig = st.sources.map(function (s) { return s[0]; }).join(",");
+  if (sig !== bestBuilt) {
+    bestBuilt = sig;
+    while (bestSub.firstChild) bestSub.removeChild(bestSub.firstChild);
+    bestBtns = Object.create(null);
+    st.sources.forEach(function (s) {
+      var key = s[0];
+      var b = el("button", "btn sec sm nav-theme", s[1]);
+      b.type = "button";
+      b.addEventListener("click", function () { openBest(key); });
+      bestBtns[key] = b;
+      bestSub.appendChild(b);
+    });
+  }
+  if (!topBox.hidden && bestKey) {
+    if (srcLabel(st, bestKey) === null) closeTop();
+    else fillBest(st, bestKey);
+  }
 }
 function openTop(kind) {
   var st = topNow();
   if (!st || !isKind(kind) || (kind === "team" && !st.doubles)) return;
   topKind = kind;
+  bestKey = null;
   if (!(wide && wide.matches)) setNav(false, false);
   fillTop(st, kind);
   topBox.hidden = false;
@@ -1409,6 +1547,7 @@ function openTop(kind) {
 // Sinusundan ang pagbabago ng page (live updates, toggle ng Analytics) para laging tama ang button at ang listahan.
 function refreshTop() {
   var st = topNow();
+  refreshBest();
   topBtn.hidden = !st;
   if (!st) {
     topSub.hidden = true;
