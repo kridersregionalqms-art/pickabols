@@ -871,61 +871,110 @@ route();
 (function () {
 "use strict";
 
-var THEME_KEY = "pb_theme";
-var root = document.documentElement;
-var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+// Guard: huwag mag-load ng dalawang beses.
+if (document.getElementById("nav")) return;
 
+var THEME_KEY = "pb_theme";
+var NAV_KEY = "pb_nav";
+var root = document.documentElement;
+var body = document.body;
+var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+var wide = window.matchMedia ? window.matchMedia("(min-width: 900px)") : null;
+
+// Whitelist lang ang tinatanggap, para walang kakaibang value na makapasok.
+function cleanTheme(t) { return t === "light" || t === "dark" ? t : null; }
 function savedTheme() {
-  try { var t = localStorage.getItem(THEME_KEY); return t === "light" || t === "dark" ? t : null; } catch (e) { return null; }
+  try { return cleanTheme(localStorage.getItem(THEME_KEY)); } catch (e) { return null; }
 }
 function currentTheme() {
   return savedTheme() || (mq && mq.matches ? "dark" : "light");
 }
 function setTheme(t) {
+  t = cleanTheme(t);
+  if (!t) return;
   root.setAttribute("data-theme", t);
   try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
-  paint();
+  paintTheme();
+}
+function savedNav() {
+  try {
+    var v = localStorage.getItem(NAV_KEY);
+    return v === "open" || v === "closed" ? v : null;
+  } catch (e) { return null; }
+}
+
+// Walang innerHTML: textContent lang ang gamit, kaya walang script injection.
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text) n.textContent = text;
+  return n;
 }
 
 // Ang nav ay nasa labas ng #app, kaya hindi ito nabubura tuwing nagre-render ang scoreboard.
-var nav = document.createElement("div");
+var toggle = el("button", "nav-toggle", "\u2630");
+toggle.type = "button";
+toggle.id = "nav-toggle";
+toggle.setAttribute("aria-label", "Menu");
+toggle.setAttribute("aria-controls", "nav");
+
+var nav = el("nav", "nav-side");
 nav.id = "nav";
-nav.innerHTML =
-  '<button type="button" class="nav-toggle" id="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-panel">☰</button>' +
-  '<div class="nav-panel" id="nav-panel" hidden>' +
-  '<div class="nav-title">Appearance</div>' +
-  '<div class="row">' +
-  '<button type="button" class="btn sm" data-theme-set="light">☀️ Light</button>' +
-  '<button type="button" class="btn sm" data-theme-set="dark">🌙 Dark</button>' +
-  "</div></div>";
-document.body.insertBefore(nav, document.getElementById("app"));
+nav.setAttribute("aria-label", "Main navigation");
 
-var toggle = document.getElementById("nav-toggle");
-var panel = document.getElementById("nav-panel");
+var themeBtn = el("button", "btn sec nav-theme");
+themeBtn.type = "button";
+themeBtn.id = "theme-btn";
+var icon = el("span", "nav-icon");
+var label = el("span", "nav-label");
+themeBtn.appendChild(icon);
+themeBtn.appendChild(label);
 
-// Ang napiling theme ay punô ang kulay ng button; ang hindi napili ay may balangkas lang.
-function paint() {
+nav.appendChild(el("div", "nav-title", "Menu"));
+nav.appendChild(themeBtn);
+body.appendChild(toggle);
+body.appendChild(nav);
+
+// Isang button lang: ang icon ang nagpapakita ng kasalukuyang setting.
+function paintTheme() {
   var cur = currentTheme();
-  nav.querySelectorAll("[data-theme-set]").forEach(function (b) {
-    b.classList.toggle("sec", b.getAttribute("data-theme-set") !== cur);
-  });
-}
-function openNav(open) {
-  panel.hidden = !open;
-  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  icon.textContent = cur === "dark" ? "\uD83C\uDF19" : "\u2600\uFE0F";
+  label.textContent = cur === "dark" ? "Dark" : "Light";
+  themeBtn.setAttribute(
+    "aria-label",
+    "Theme: " + label.textContent + ". Tap to switch to " + (cur === "dark" ? "light" : "dark") + "."
+  );
 }
 
-toggle.addEventListener("click", function () { openNav(panel.hidden); });
-nav.addEventListener("click", function (e) {
-  var b = e.target.closest ? e.target.closest("[data-theme-set]") : null;
-  if (b) setTheme(b.getAttribute("data-theme-set"));
+function setNav(open, remember) {
+  body.classList.toggle("nav-open", open);
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  nav.setAttribute("aria-hidden", open ? "false" : "true");
+  if (remember) {
+    try { localStorage.setItem(NAV_KEY, open ? "open" : "closed"); } catch (e) {}
+  }
+}
+function isOpen() { return body.classList.contains("nav-open"); }
+
+toggle.addEventListener("click", function () { setNav(!isOpen(), true); });
+themeBtn.addEventListener("click", function () {
+  setTheme(currentTheme() === "dark" ? "light" : "dark");
 });
-document.addEventListener("click", function (e) { if (!nav.contains(e.target)) openNav(false); });
-document.addEventListener("keydown", function (e) { if (e.key === "Escape") openNav(false); });
-if (mq && mq.addEventListener) mq.addEventListener("change", paint);
+// Sa phone: mag-close kapag nag-tap sa labas ng sidebar.
+document.addEventListener("click", function (e) {
+  if (isOpen() && !(wide && wide.matches) && !nav.contains(e.target) && !toggle.contains(e.target)) setNav(false, false);
+});
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && isOpen()) setNav(false, false);
+});
+if (mq && mq.addEventListener) mq.addEventListener("change", paintTheme);
+
+// Simula: bukas sa desktop (o ayon sa huling pinili), sarado sa phone.
+var s = savedNav();
+setNav(wide && wide.matches ? (s ? s === "open" : true) : false, false);
 
 var saved = savedTheme();
 if (saved) root.setAttribute("data-theme", saved);
-paint();
+paintTheme();
 })();
 /* ------------------------------ end of navigation codes ------------------------------ */
