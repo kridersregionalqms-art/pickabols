@@ -801,15 +801,8 @@ function renderSession() {
       '<p class="muted" id="copied"></p></div>';
   }
   if (isOrg) {
-    h += '<div class="card"><div class="row"><h2 class="grow" style="margin:0">📊 Analytics: ' + (d.analytics ? "ON" : "OFF") + "</h2>" +
-      '<button class="btn sm ' + (d.analytics ? "sec" : "a") + '" data-act="analytics"' + (c ? " disabled" : "") + ">" +
-      (d.analytics ? "Turn off" : "Turn on") + "</button></div>" +
-      '<label>Show Top how many to everyone?</label><select data-act="topn">' +
-      [3, 5, 10].map(function (t) { return "<option value=\"" + t + "\"" + (cleanTopN(d.topN) === t ? " selected" : "") + ">Top " + t + "</option>"; }).join("") + "</select>" +
-      '<p class="muted">' + (d.analytics
-        ? "Tap the player on the court who won the rally. Stats are being tracked."
-        : "Score with the Team A/B buttons. No stats are tracked.") +
-      (c ? " This can only be changed between games." : "") + "</p></div>";
+    h += '<p class="muted">📊 Analytics: <strong>' + (d.analytics ? "ON" : "OFF") + "</strong> • " +
+      (c ? "locked until this game ends" : "change it in ☰ Settings before starting a game") + "</p>";
   }
   if (c) {
     h += '<div class="card"><h2>Current game • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
@@ -974,10 +967,6 @@ document.addEventListener("change", function (e) {
     var v = num(t.value);
     mutate(function (d) { d.target = v; });
   }
-  if (t && t.dataset && t.dataset.act === "topn") {
-    var tn = cleanTopN(t.value);
-    mutate(function (d) { d.topN = tn; });
-  }
 });
 document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); } });
 
@@ -1085,6 +1074,21 @@ function bestStats(d) {
   return { games: games, sources: SOURCES.map(function (s) { return [s[0], s[1]]; }), lists: lists };
 }
 window.__pbBest = function () { return data ? bestStats(data) : null; };
+// Para sa Settings sa navigation: hugis lang ng settings ang ibinibigay, hindi ang buong session.
+window.__pbSettings = function () {
+  if (!data) return null;
+  return { org: isOrg, analytics: !!data.analytics, topN: cleanTopN(data.topN), locked: !!data.current };
+};
+// Organizer lang ang makakapagbago (mutate ay tumitingin sa isOrg). Whitelist ang "what" at ang value.
+window.__pbSet = function (what, val) {
+  if (!isOrg || !data) return;
+  if (what === "analytics") {
+    mutate(function (d) { if (!d.current) d.analytics = !d.analytics; });
+  } else if (what === "topn") {
+    var tn = cleanTopN(val);
+    mutate(function (d) { d.topN = tn; });
+  }
+};
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
 route();
@@ -1161,7 +1165,7 @@ navLogo.alt = "Pickabol";
 navLogo.decoding = "async";
 nav.appendChild(navLogo);
 nav.appendChild(el("div", "nav-title", "Menu"));
-nav.appendChild(themeBtn);
+// Ang theme button ay nasa loob na ng Settings panel (tingnan sa ibaba).
 
 // Ang "Top" ay lalabas lang kapag ON ang Analytics ng session. Ang pag-click dito ay nagbubukas ng sub-navigation.
 var topBtn = el("button", "btn sec nav-theme");
@@ -1217,6 +1221,110 @@ bestBtn.addEventListener("click", function () {
   bestCaret.textContent = bestSub.hidden ? "\u25BE" : "\u25B4";
   bestBtn.setAttribute("aria-expanded", bestSub.hidden ? "false" : "true");
 });
+// ---- Settings (footer ng sidebar) ----
+var HINT_KEY = "pb_hint";
+function hintState() {
+  try { var v = localStorage.getItem(HINT_KEY); return v === "2" || v === "done" ? v : "1"; } catch (e) { return "done"; }
+}
+function setHint(v) { try { localStorage.setItem(HINT_KEY, v); } catch (e) {} }
+
+var setWrap = el("div", "nav-foot");
+
+var hintFoot = el("div", "hint hint-foot");
+hintFoot.hidden = true;
+hintFoot.appendChild(el("div", "", "Dark/Light mode and Analytics are here."));
+var hintFootOk = el("button", "btn sm", "Got it");
+hintFootOk.type = "button";
+hintFoot.appendChild(hintFootOk);
+
+var setPanel = el("div", "nav-setpanel");
+setPanel.hidden = true;
+setPanel.appendChild(el("div", "nav-title", "Appearance"));
+setPanel.appendChild(themeBtn);
+
+var orgBox = el("div", "nav-org");
+orgBox.hidden = true;
+orgBox.appendChild(el("div", "nav-title set-gap", "Organizer"));
+var anBtn = el("button", "btn sec nav-theme");
+anBtn.type = "button";
+var anNote = el("p", "muted");
+var topLabel = el("label", "", "Show Top how many to everyone?");
+var topSel = document.createElement("select");
+[3, 5, 10].forEach(function (n) {
+  var o = document.createElement("option");
+  o.value = String(n);
+  o.textContent = "Top " + n;
+  topSel.appendChild(o);
+});
+orgBox.appendChild(anBtn);
+orgBox.appendChild(anNote);
+orgBox.appendChild(topLabel);
+orgBox.appendChild(topSel);
+setPanel.appendChild(orgBox);
+
+var setBtn = el("button", "btn sec nav-theme");
+setBtn.type = "button";
+setBtn.setAttribute("aria-expanded", "false");
+setBtn.appendChild(el("span", "nav-icon", "\u2699\uFE0F"));
+setBtn.appendChild(el("span", "nav-label", "Settings"));
+var setCaret = el("span", "nav-icon nav-caret", "\u25B4");
+setBtn.appendChild(setCaret);
+
+setWrap.appendChild(hintFoot);
+setWrap.appendChild(setPanel);
+setWrap.appendChild(setBtn);
+nav.appendChild(setWrap);
+
+// Unang hint: nakaturo sa ☰ button.
+var hintTop = el("div", "hint hint-top");
+hintTop.hidden = true;
+hintTop.appendChild(el("div", "", "Tap here for Settings, Top and Best."));
+var hintTopOk = el("button", "btn sm", "Got it");
+hintTopOk.type = "button";
+hintTop.appendChild(hintTopOk);
+body.appendChild(hintTop);
+
+function paintHint() {
+  if (!hintTop) return;
+  var s = hintState();
+  if (s === "1" && isOpen()) { setHint("2"); s = "2"; }
+  toggle.classList.toggle("pulse", s === "1");
+  hintTop.hidden = s !== "1";
+  hintFoot.hidden = !(s === "2" && isOpen());
+}
+hintTopOk.addEventListener("click", function () { setHint("2"); paintHint(); });
+hintFootOk.addEventListener("click", function () { setHint("done"); paintHint(); });
+
+setBtn.addEventListener("click", function () {
+  setPanel.hidden = !setPanel.hidden;
+  setCaret.textContent = setPanel.hidden ? "\u25B4" : "\u25BE";
+  setBtn.setAttribute("aria-expanded", setPanel.hidden ? "false" : "true");
+  if (hintState() === "2") { setHint("done"); paintHint(); }
+});
+
+function settingsNow() {
+  try { return typeof window.__pbSettings === "function" ? window.__pbSettings() : null; } catch (e) { return null; }
+}
+// Organizer lang ang nakakakita ng Analytics at Top N. Ang viewer ay Dark/Light lang.
+function refreshSettings() {
+  var st = settingsNow();
+  var show = !!(st && st.org);
+  orgBox.hidden = !show;
+  if (!show) return;
+  anBtn.textContent = "\uD83D\uDCCA Analytics: " + (st.analytics ? "ON" : "OFF");
+  anBtn.disabled = !!st.locked;
+  anNote.textContent = st.locked
+    ? "Can only be changed between games."
+    : (st.analytics ? "Tap to turn off. Change it before starting a game." : "Tap to turn on. Change it before starting a game.");
+  topSel.value = String(st.topN);
+}
+anBtn.addEventListener("click", function () {
+  if (typeof window.__pbSet === "function") window.__pbSet("analytics");
+});
+topSel.addEventListener("change", function () {
+  if (typeof window.__pbSet === "function") window.__pbSet("topn", topSel.value);
+});
+
 body.appendChild(toggle);
 body.appendChild(nav);
 
@@ -1235,6 +1343,7 @@ function setNav(open, remember) {
   body.classList.toggle("nav-open", open);
   toggle.setAttribute("aria-expanded", open ? "true" : "false");
   nav.setAttribute("aria-hidden", open ? "false" : "true");
+  paintHint();
   if (remember) {
     try { localStorage.setItem(NAV_KEY, open ? "open" : "closed"); } catch (e) {}
   }
@@ -1472,6 +1581,7 @@ function openTop(kind) {
 function refreshTop() {
   var st = topNow();
   refreshBest();
+  refreshSettings();
   topBtn.hidden = !st;
   if (!st) {
     topSub.hidden = true;
