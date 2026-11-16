@@ -862,7 +862,7 @@ function renderSession() {
     "<li><strong>Two-bounce rule:</strong> the ball must bounce once on each side before it can be volleyed.</li>" +
     "<li><strong>Kitchen:</strong> no volleying while standing in the kitchen.</li>" +
     "</ul></details></div>";
-  h += '<p class="muted center"><a href="#" data-act="home-new">Create a new session</a></p>';
+  // Ang "Create a new session" ay nasa nav na (Sessions > New session), kaya wala na rito.
   $app.innerHTML = h;
 }
 
@@ -921,7 +921,7 @@ function handle(act, ds) {
       if (code.length >= 4) location.hash = "#/s/" + code;
       break;
     case "reload": loadSession(); break;
-    case "home-new": homeView = "new"; break; // ang href="#" ang maglilipat pabalik sa home
+    // (walang "home-new" case, ang nav na ang nagbubukas ng home gamit ang __pbHome)
     case "retry": if (!saving) persist(); break;
     case "copy": copyText(base + "#/s/" + sid); break;
     case "share": shareView(base + "#/s/" + sid); break;
