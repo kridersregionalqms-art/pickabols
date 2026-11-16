@@ -107,6 +107,14 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .wtime{font-size:2.4rem;font-weight:800;margin-top:2px}
 .cl{font-size:.62rem;font-weight:800;color:var(--muted);letter-spacing:.04em}
 .cn{font-size:1.4rem;font-weight:800;line-height:1.1}
+.pick{border:2px solid var(--a);border-radius:12px;padding:10px;margin-top:12px;background:var(--bg)}
+.pick-title{font-weight:800;text-align:center;margin-bottom:8px;word-break:break-word}
+.pick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.nav-sub{margin:6px 0 0 12px;padding-left:8px;border-left:2px solid var(--line)}
+.nav-sub[hidden]{display:none}
+.nav-sub .btn{font-size:.9rem}
+.nav-sub .btn.on{border-color:var(--a);color:var(--a)}
+.nav-caret{margin-left:auto}
 @media (max-width:420px){
   #app{padding:8px 8px 28px}
   .card{padding:10px;margin:8px 0}
@@ -142,6 +150,26 @@ var saving = false, dirty = false;
 var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
 var holdUntil = 0, holdTimer = null, cachedMode = false;
+var pickPid = null; // ang player na na-tap at hinihintay ang source (hindi ito sine-save)
+// ====== LISTAHAN NG SOURCE NG SCORE ======
+// Para magdagdag: isang linya lang ["key", "Label"]. Ang key ay a-z at _ lang, hanggang 16 na letra.
+var SOURCES = [
+  ["smash", "Smash"],
+  ["dink", "Dink"],
+  ["drive", "Drive"],
+  ["serve", "Serve (Ace)"],
+  ["volley", "Volley"],
+  ["drop", "Drop shot"],
+  ["lob", "Lob"],
+  ["opp_error", "Opponent error"],
+  ["other", "Other"]
+];
+// Whitelist: ibinabalik lang ang key kung nasa SOURCES, kung hindi ay null.
+function srcKey(k) {
+  if (typeof k !== "string") return null;
+  for (var i = 0; i < SOURCES.length; i++) if (SOURCES[i][0] === k) return k;
+  return null;
+}
 
 /* ---------- helpers ---------- */
 function esc(s) {
@@ -345,13 +373,13 @@ function checkDone(c) {
 }
 // Ang nagse-serve lang ang nakaka-score. Kapag natalo ang server: doubles server 1 -> server 2;
 // server 2 (o singles) -> side out, ang kabilang team ang magse-serve.
-function rally(d, winner, pid) {
+function rally(d, winner, pid, src) {
   var c = d.current;
   if (!c || c.done) return;
   c.stack = c.stack || [];
   ensurePos(c);
   var scored = winner === c.server;
-  c.stack.push([c.scoreA, c.scoreB, c.server, c.serverNum, c.posA.slice(), c.posB.slice(), c.serverId, pid || null, (pid && scored) ? 1 : 0]);
+  c.stack.push([c.scoreA, c.scoreB, c.server, c.serverNum, c.posA.slice(), c.posB.slice(), c.serverId, pid || null, (pid && scored) ? 1 : 0, (pid && srcKey(src)) || null]);
   if (c.stack.length > 40) c.stack.shift();
   if (winner === c.server) {
     if (winner === "A") c.scoreA = num(c.scoreA) + 1; else c.scoreB = num(c.scoreB) + 1;
@@ -372,16 +400,22 @@ function rally(d, winner, pid) {
     c.rw = c.rw || {};
     c.rw[pid] = num(c.rw[pid]) + 1;
     if (scored) { c.pts = c.pts || {}; c.pts[pid] = num(c.pts[pid]) + 1; }
+    var sk = srcKey(src);
+    if (sk) {
+      c.sc = c.sc || {};
+      c.sc[pid] = c.sc[pid] || {};
+      c.sc[pid][sk] = num(c.sc[pid][sk]) + 1;
+    }
   }
   checkDone(c);
 }
 // Analytics mode: ang player na na-tap ang nanalo ng rally. Ang team niya ang basehan ng score, tulad ng dati.
-function rallyBy(d, pid) {
+function rallyBy(d, pid, src) {
   var c = d.current;
   if (!c || c.done || !c.track || typeof pid !== "string") return;
   var winner = c.teamA.indexOf(pid) >= 0 ? "A" : c.teamB.indexOf(pid) >= 0 ? "B" : null;
   if (!winner) return;
-  rally(d, winner, pid);
+  rally(d, winner, pid, srcKey(src) || "other");
 }
 function undo(d) {
   var c = d.current;
@@ -393,6 +427,7 @@ function undo(d) {
   if (s[7] && c.rw) {
     c.rw[s[7]] = Math.max(0, num(c.rw[s[7]]) - 1);
     if (s[8] && c.pts) c.pts[s[7]] = Math.max(0, num(c.pts[s[7]]) - 1);
+    if (s[9] && c.sc && c.sc[s[7]]) c.sc[s[7]][s[9]] = Math.max(0, num(c.sc[s[7]][s[9]]) - 1);
   }
   checkDone(c);
 }
@@ -400,17 +435,21 @@ function finish(d) {
   var c = d.current;
   if (!c || !c.done) return;
   // Analytics mode: isama ang rally at puntos ng bawat player sa natapos na laro: [pangalan, puntos, rally].
-  var ps = [];
+  var ps = [], sc = [];
   if (c.track) {
     [].concat(c.teamA, c.teamB).forEach(function (id) {
       ps.push([pname(id), num((c.pts || {})[id]), num((c.rw || {})[id])]);
+      SOURCES.forEach(function (s) {
+        var n = num((((c.sc || {})[id]) || {})[s[0]]);
+        if (n > 0) sc.push([pname(id), s[0], n]);
+      });
     });
   }
   d.history.push({
     round: c.round, a: c.teamA.map(function (i) { return pname(i); }),
     b: c.teamB.map(function (i) { return pname(i); }),
     sa: num(c.scoreA), sb: num(c.scoreB), t: num(c.target),
-    tr: c.track ? 1 : 0, ps: ps
+    tr: c.track ? 1 : 0, ps: ps, sc: sc
   });
   d.current = null;
   ensureNext(d);
@@ -491,8 +530,10 @@ function topStats(d) {
   return {
     games: games,
     doubles: d.mode === "doubles",
-    scorers: pl.filter(function (p) { return p.pts > 0 || p.rw > 0; })
+    scorers: pl.filter(function (p) { return p.pts > 0; })
       .sort(function (a, b) { return b.pts - a.pts || b.rw - a.rw || byName(a, b); }).slice(0, 5),
+    rallies: pl.filter(function (p) { return p.rw > 0; })
+      .sort(function (a, b) { return b.rw - a.rw || b.pts - a.pts || byName(a, b); }).slice(0, 5),
     wins: pl.filter(function (p) { return p.w + p.l > 0; }).sort(rank).slice(0, 5),
     teams: Object.keys(T).map(function (k) { return T[k]; }).sort(rank).slice(0, 5)
   };
@@ -705,6 +746,14 @@ function courtHtml(d, c) {
   }
   return h + "</div>";
 }
+// Lalabas kapag na-tap ng organizer ang player: pumili ng source ng score.
+function pickerHtml(d) {
+  var h = '<div class="pick"><div class="pick-title">' + esc(pname(pickPid)) + ' won the rally. How?</div><div class="pick-grid">';
+  SOURCES.forEach(function (s) {
+    h += '<button class="btn sec" data-act="pick" data-src="' + esc(s[0]) + '">' + esc(s[1]) + "</button>";
+  });
+  return h + '</div><div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="pick-cancel">Cancel</button></div></div>';
+}
 function callHtml(d, c) {
   var srv = c.server === "A" ? num(c.scoreA) : num(c.scoreB);
   var rcv = c.server === "A" ? num(c.scoreB) : num(c.scoreA);
@@ -742,6 +791,8 @@ function boardHtml(d, c) {
     if (c.done) {
       h += '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="save">✅ Save result</button>' +
         '<button class="btn sec" data-act="undo">↩ Undo</button></div>';
+    } else if (c.track && pickPid && inCurrent(d, pickPid)) {
+      h += pickerHtml(d);
     } else if (c.track) {
       h += '<p class="muted center" style="margin-top:12px">Tap the player on the court who won the rally.</p>' +
         '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="undo"' +
@@ -994,7 +1045,15 @@ function handle(act, ds) {
     case "copy": copyText(base + "#/s/" + sid); break;
     case "share": shareView(base + "#/s/" + sid); break;
     case "rally": mutate(function (d) { rally(d, ds.team); }); break;
-    case "tap": mutate(function (d) { rallyBy(d, ds.id); }); break;
+    case "tap":
+      if (typeof ds.id === "string") { pickPid = ds.id; render(); }
+      break;
+    case "pick":
+      var skey = srcKey(ds.src), pp = pickPid;
+      pickPid = null;
+      if (skey && pp) mutate(function (d) { rallyBy(d, pp, skey); }); else render();
+      break;
+    case "pick-cancel": pickPid = null; render(); break;
     case "analytics": mutate(function (d) { if (!d.current) d.analytics = !d.analytics; }); break;
     case "undo": mutate(undo); break;
     case "save": mutate(finish); break;
@@ -1092,7 +1151,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false;
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
@@ -1189,14 +1248,36 @@ themeBtn.appendChild(label);
 nav.appendChild(el("div", "nav-title", "Menu"));
 nav.appendChild(themeBtn);
 
-// Ang "Top" ay lalabas lang kapag ON ang Analytics ng session.
+// Ang "Top" ay lalabas lang kapag ON ang Analytics ng session. Ang pag-click dito ay nagbubukas ng sub-navigation.
 var topBtn = el("button", "btn sec nav-theme");
 topBtn.type = "button";
 topBtn.id = "top-btn";
 topBtn.hidden = true;
+topBtn.setAttribute("aria-expanded", "false");
 topBtn.appendChild(el("span", "nav-icon", "\uD83C\uDFC6"));
 topBtn.appendChild(el("span", "nav-label", "Top"));
+var topCaret = el("span", "nav-icon nav-caret", "\u25BE");
+topBtn.appendChild(topCaret);
 nav.appendChild(topBtn);
+
+// Fixed na listahan lang (whitelist). Walang galing sa labas.
+var topSub = el("div", "nav-sub");
+topSub.hidden = true;
+var TOP_ITEMS = [
+  ["scorer", "\uD83C\uDFAF Top Scorer"],
+  ["rallies", "\uD83D\uDD25 Top Won Rallies"],
+  ["wins", "\uD83E\uDD47 Most Wins"],
+  ["team", "\uD83D\uDC65 Top Team"]
+];
+var subBtns = Object.create(null);
+TOP_ITEMS.forEach(function (it) {
+  var b = el("button", "btn sec sm nav-theme", it[1]);
+  b.type = "button";
+  b.addEventListener("click", function () { openTop(it[0]); });
+  subBtns[it[0]] = b;
+  topSub.appendChild(b);
+});
+nav.appendChild(topSub);
 body.appendChild(toggle);
 body.appendChild(nav);
 
@@ -1236,6 +1317,17 @@ if (mq && mq.addEventListener) mq.addEventListener("change", paintTheme);
 
 // ---- Top (analytics) ----
 // Walang innerHTML: textContent lang ang gamit, kaya walang script injection.
+// Whitelist ang mga pwedeng "kind". Ang kahit anong ibang value ay tinatanggihan.
+var TOP_TITLES = Object.freeze({
+  scorer: "\uD83C\uDFAF Top Scorer",
+  rallies: "\uD83D\uDD25 Top Won Rallies",
+  wins: "\uD83E\uDD47 Most Wins",
+  team: "\uD83D\uDC65 Top Team"
+});
+function isKind(k) {
+  return typeof k === "string" && Object.prototype.hasOwnProperty.call(TOP_TITLES, k);
+}
+var topKind = null;
 var topBox = el("div", "top-modal");
 topBox.hidden = true;
 topBox.setAttribute("role", "dialog");
@@ -1243,7 +1335,8 @@ topBox.setAttribute("aria-modal", "true");
 topBox.setAttribute("aria-label", "Top");
 var topCard = el("div", "top-card");
 var topHead = el("div", "top-head");
-topHead.appendChild(el("h2", "", "\uD83C\uDFC6 Top"));
+var topTitle = el("h2", "", "\uD83C\uDFC6 Top");
+topHead.appendChild(topTitle);
 var topClose = el("button", "btn sec sm", "\u2715");
 topClose.type = "button";
 topClose.setAttribute("aria-label", "Close");
@@ -1257,32 +1350,43 @@ body.appendChild(topBox);
 function topRow(name, value) {
   var li = el("li", "top-row");
   var line = el("div", "top-line");
-  line.appendChild(el("span", "top-name", name));
-  line.appendChild(el("span", "top-val", value));
+  line.appendChild(el("span", "top-name", String(name)));
+  line.appendChild(el("span", "top-val", String(value)));
   li.appendChild(line);
   return li;
 }
-function topSection(title, rows, emptyText) {
-  var sec = el("div", "top-sec");
-  sec.appendChild(el("h3", "top-h", title));
-  if (!rows.length) { sec.appendChild(el("p", "muted", emptyText)); return sec; }
+function topList(rows, emptyText) {
+  if (!rows.length) return el("p", "muted", emptyText);
   var ol = el("ol", "top-list");
   rows.forEach(function (r) { ol.appendChild(r); });
-  sec.appendChild(ol);
-  return sec;
+  return ol;
 }
 function signed(n) { return (n > 0 ? "+" : "") + n; }
-function fillTop(st) {
+function paintSub() {
+  Object.keys(subBtns).forEach(function (k) {
+    subBtns[k].classList.toggle("on", !topBox.hidden && k === topKind);
+  });
+}
+// Isang listahan lang ang ipinapakita sa modal, ayon sa pinili sa sub-navigation.
+function fillTop(st, kind) {
+  if (!isKind(kind)) return;
   while (topBody.firstChild) topBody.removeChild(topBody.firstChild);
+  topTitle.textContent = TOP_TITLES[kind];
   topBody.appendChild(el("p", "muted", st.games + (st.games === 1 ? " game" : " games") + " scored with Analytics ON."));
-  topBody.appendChild(topSection("\uD83C\uDFAF Top scorer", st.scorers.map(function (p) {
-    return topRow(p.name, p.pts + " pts \u2022 " + p.rw + " rallies");
-  }), "No points yet."));
-  topBody.appendChild(topSection("\uD83E\uDD47 Most wins", st.wins.map(function (p) {
-    return topRow(p.name, p.w + "W-" + p.l + "L (" + signed(p.diff) + ")");
-  }), "No games yet."));
-  if (st.doubles) {
-    topBody.appendChild(topSection("\uD83D\uDC65 Top team", st.teams.map(function (t) {
+  if (kind === "scorer") {
+    topBody.appendChild(topList(st.scorers.map(function (p) {
+      return topRow(p.name, p.pts + " pts");
+    }), "No points yet."));
+  } else if (kind === "rallies") {
+    topBody.appendChild(topList(st.rallies.map(function (p) {
+      return topRow(p.name, p.rw + (p.rw === 1 ? " rally" : " rallies"));
+    }), "No rallies yet."));
+  } else if (kind === "wins") {
+    topBody.appendChild(topList(st.wins.map(function (p) {
+      return topRow(p.name, p.w + "W-" + p.l + "L (" + signed(p.diff) + ")");
+    }), "No games yet."));
+  } else if (kind === "team" && st.doubles) {
+    topBody.appendChild(topList(st.teams.map(function (t) {
       return topRow(t.name, t.w + "W-" + t.l + "L (" + signed(t.diff) + ")");
     }), "No games yet."));
   }
@@ -1290,23 +1394,46 @@ function fillTop(st) {
 function topNow() {
   try { return typeof window.__pbTop === "function" ? window.__pbTop() : null; } catch (e) { return null; }
 }
+function closeTop() {
+  topBox.hidden = true;
+  topKind = null;
+  paintSub();
+}
+function openTop(kind) {
+  var st = topNow();
+  if (!st || !isKind(kind) || (kind === "team" && !st.doubles)) return;
+  topKind = kind;
+  if (!(wide && wide.matches)) setNav(false, false);
+  fillTop(st, kind);
+  topBox.hidden = false;
+  paintSub();
+}
 // Sinusundan ang pagbabago ng page (live updates, toggle ng Analytics) para laging tama ang button at ang listahan.
 function refreshTop() {
   var st = topNow();
   topBtn.hidden = !st;
-  if (!st) { topBox.hidden = true; return; }
-  if (!topBox.hidden) fillTop(st);
+  if (!st) {
+    topSub.hidden = true;
+    topCaret.textContent = "\u25BE";
+    topBtn.setAttribute("aria-expanded", "false");
+    closeTop();
+    return;
+  }
+  subBtns.team.hidden = !st.doubles;
+  if (!topBox.hidden && topKind) {
+    if (topKind === "team" && !st.doubles) closeTop();
+    else fillTop(st, topKind);
+  }
 }
 topBtn.addEventListener("click", function () {
-  var st = topNow();
-  if (!st) return;
-  if (!(wide && wide.matches)) setNav(false, false);
-  fillTop(st);
-  topBox.hidden = false;
+  if (!topNow()) return;
+  topSub.hidden = !topSub.hidden;
+  topCaret.textContent = topSub.hidden ? "\u25BE" : "\u25B4";
+  topBtn.setAttribute("aria-expanded", topSub.hidden ? "false" : "true");
 });
-topClose.addEventListener("click", function () { topBox.hidden = true; });
-topBox.addEventListener("click", function (e) { if (e.target === topBox) topBox.hidden = true; });
-document.addEventListener("keydown", function (e) { if (e.key === "Escape") topBox.hidden = true; });
+topClose.addEventListener("click", closeTop);
+topBox.addEventListener("click", function (e) { if (e.target === topBox) closeTop(); });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !topBox.hidden) closeTop(); });
 var appEl = document.getElementById("app");
 if (appEl && window.MutationObserver) new MutationObserver(refreshTop).observe(appEl, { childList: true });
 refreshTop();
