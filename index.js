@@ -168,12 +168,13 @@ function rebuildTeams(d) {
   d.next.teamA = [A[0], B[1]];
   d.next.teamB = [A[1], B[0]];
 }
-// Swap: magpapalit ng left at right ang dalawang player ng isang team sa kasalukuyang laro.
+// Swap: magpapalit ng left at right ang dalawang player ng isang team sa susunod na laro (bago mag-start).
+// Ang unang pangalan ay Right, ang pangalawa ay Left.
 function swapTeamSides(d, team) {
-  var c = d.current;
-  if (!c || c.done || d.mode !== "doubles") return;
-  ensurePos(c);
-  swapSides(c, team);
+  if (!d.next || d.mode !== "doubles") return;
+  var key = team === "A" ? "teamA" : "teamB";
+  var t = d.next[key];
+  if (t.length === 2) d.next[key] = [t[1], t[0]];
 }
 // Court positions: pos arrays are [rightPlayerId, leftPlayerId] from each team's own view.
 function ensurePos(c) {
@@ -516,9 +517,7 @@ function boardHtml(d, c) {
         '<button class="btn a grow" data-act="rally" data-team="A">Team A won the rally</button>' +
         '<button class="btn b grow" data-act="rally" data-team="B">Team B won the rally</button></div>' +
         '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="undo"' +
-        ((c.stack && c.stack.length) ? "" : " disabled") + '>↩ Undo</button>' +
-        (dbl ? '<button class="btn sec sm" data-act="swap" data-team="A">🔄 Swap Team A</button>' +
-        '<button class="btn sec sm" data-act="swap" data-team="B">🔄 Swap Team B</button>' : "") + '</div>' +
+        ((c.stack && c.stack.length) ? "" : " disabled") + '>↩ Undo</button></div>' +
         '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>';
     }
   }
@@ -532,7 +531,9 @@ function nextHtml(d) {
     h += '<div class="row"><button class="btn grow" data-act="setup"' + (d.current ? " disabled" : "") + '>▶ Start game</button>' +
       '<button class="btn sec" data-act="shuffle">🔀 Shuffle again</button></div>';
     if (d.mode === "doubles") {
-      h += '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="rebuild">🔧 Rebuild</button></div>';
+      h += '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="rebuild">🔧 Rebuild</button>' +
+        '<button class="btn sec sm" data-act="swap" data-team="A">🔄 Swap House</button>' +
+        '<button class="btn sec sm" data-act="swap" data-team="B">🔄 Swap House</button></div>';
     }
     if (d.current) h += '<p class="muted">The current game must finish before this one can start.</p>';
   }
