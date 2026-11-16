@@ -2,6 +2,11 @@
 (function () {
 "use strict";
 
+// Proteksyon laban sa clickjacking: huwag payagang i-embed ang page sa ibang site.
+if (window.top !== window.self) {
+  try { window.top.location.href = window.self.location.href; } catch (e) { document.documentElement.innerHTML = ""; }
+}
+
 var API = "https://pickabols-api.pickabolers.workers.dev";
 var $app = document.getElementById("app");
 var sid = null, key = null, data = null, version = 0, isOrg = false;
@@ -9,6 +14,7 @@ var pollTimer = null, loadError = null, lastSync = "", statusText = "";
 var saving = false, dirty = false;
 var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
+var holdUntil = 0, holdTimer = null;
 
 /* ---------- helpers ---------- */
 function esc(s) {
@@ -33,6 +39,11 @@ function pname(id) {
   return p ? p.name : "?";
 }
 function teamNames(ids) { return ids.map(pname).join(" & "); }
+// Tinitiyak na tama ang hugis ng data na galing sa server bago i-render.
+function okData(d) {
+  return !!d && typeof d === "object" && Array.isArray(d.players) && Array.isArray(d.history) &&
+    (d.mode === "doubles" || d.mode === "singles");
+}
 
 /* ---------- game logic ---------- */
 function makeData(name, mode, target, names) {
@@ -271,7 +282,7 @@ function removePlayer(d, id) {
 function parseNames(text) {
   var seen = {}, out = [];
   String(text).split(/[\n,]+/).forEach(function (s) {
-    s = s.trim().slice(0, 40);
+    s = s.replace(/[<>\u0000-\u001f]/g, "").trim().slice(0, 40);
     if (s && !seen[s.toLowerCase()]) { seen[s.toLowerCase()] = 1; out.push(s); }
   });
   return out.slice(0, 60);
@@ -325,6 +336,7 @@ async function loadSession() {
     if (r.status === 404) { loadError = "This session was not found. Please check that the link or code is correct."; render(); return; }
     if (!r.ok) throw new Error(String(r.status));
     var j = await r.json();
+    if (!okData(j.data)) throw new Error("bad data");
     data = j.data;
     version = j.version;
     lastSync = new Date().toLocaleTimeString();
@@ -337,13 +349,13 @@ async function loadSession() {
   }
 }
 async function pollOnce() {
-  if (document.hidden || !sid || isOrg) return;
+  if (document.hidden || !sid || isOrg || !data) return;
   try {
     var r = await fetch(API + "/api/sessions/" + sid, { cache: "no-store" });
     if (!r.ok) return;
     var j = await r.json();
     lastSync = new Date().toLocaleTimeString();
-    if (j.version !== version) { version = j.version; data = j.data; render(); }
+    if (j.version !== version && okData(j.data)) { version = j.version; data = j.data; render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
   } catch (e) {}
 }
@@ -359,7 +371,7 @@ function stopLive() {
   if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} ws = null; }
 }
 function startLive() {
-  if (isOrg || !sid) return;
+  if (isOrg || !sid || !data) return;
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
   clearInterval(pollTimer);
   pollTimer = setInterval(pollOnce, 15000); // slow fallback only, used when the socket is not connected
@@ -628,7 +640,7 @@ function renderSession() {
   if (isOrg) {
     h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Saved") + "</p>";
   } else {
-    h += '<p class="muted">View only. Only the organizer can edit. Updates automatically • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
+    h += '<p class="muted">View only. Only the organizer can edit. Updates automatically, no need to reload • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
   }
   if (isOrg) {
     h += '<div class="card"><h2>Share the scoreboard</h2>' +
@@ -693,7 +705,7 @@ function renderSession() {
 /* ---------- actions ---------- */
 async function createSession() {
   var err = $("f-err");
-  var name = ($("f-name").value || "").trim().slice(0, 40) || "Open Play";
+  var name = ($("f-name").value || "").replace(/[<>\u0000-\u001f]/g, "").trim().slice(0, 40) || "Open Play";
   var modeEl = document.querySelector('input[name="mode"]:checked');
   var mode = modeEl ? modeEl.value : "doubles";
   var target = num($("f-target").value) || 11;
@@ -793,9 +805,49 @@ document.addEventListener("change", function (e) {
 });
 document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); } });
 
+/* ---------- bantay sa paulit-ulit na reload (viewer lang) ---------- */
+// Hanggang `max` na load lang kada 60 segundo (3 sa viewer, 5 sa organizer). Sumobra? May countdown muna.
+function reloadGuard(max) {
+  try {
+    var now = Date.now();
+    var t = JSON.parse(sessionStorage.getItem("pb_loads") || "[]").filter(function (x) { return now - x < 60000; });
+    if (t.length >= max) return Math.max(1, Math.ceil((t[0] + 60000 - now) / 1000));
+    t.push(now);
+    sessionStorage.setItem("pb_loads", JSON.stringify(t));
+  } catch (e) {}
+  return 0;
+}
+function holdTick() {
+  clearTimeout(holdTimer);
+  var left = Math.ceil((holdUntil - Date.now()) / 1000);
+  if (left <= 0) { loadSession(); return; }
+  $app.innerHTML = '<h1>🏓 Pickleball Open Play</h1><div class="card"><p><strong>' +
+    (isOrg ? "Your changes are saved automatically." : "The scoreboard updates automatically.") + "</strong> No need to reload.</p>" +
+    '<p class="muted">Opening again in ' + left + " seconds...</p></div>";
+  holdTimer = setTimeout(holdTick, 1000);
+}
+function toast(text) {
+  var el = document.getElementById("toast");
+  if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; document.body.appendChild(el); }
+  el.textContent = text;
+  el.style.display = "block";
+  clearTimeout(toast.t);
+  toast.t = setTimeout(function () { el.style.display = "none"; }, 3500);
+}
+// Viewer lang: huwag payagan ang F5 / Ctrl+R / Cmd+R dahil awtomatiko namang nag-a-update ang page.
+document.addEventListener("keydown", function (e) {
+  if (!sid || !data) return;
+  var k = String(e.key || "").toLowerCase();
+  if (k === "f5" || ((e.ctrlKey || e.metaKey) && k === "r")) {
+    e.preventDefault();
+    toast(isOrg ? "Your changes are saved automatically. No need to reload." : "The score updates automatically. No need to reload.");
+  }
+});
+
 /* ---------- routing ---------- */
 function route() {
   stopLive();
+  clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
   lastScore = null; flash = null; warmupInputOpen = false;
@@ -805,6 +857,8 @@ function route() {
   key = m[2] || (loadKeys()[sid] || {}).key || null;
   if (m[2]) saveKey(sid, m[2]);
   isOrg = !!key;
+  var wait = reloadGuard(isOrg ? 5 : 3);
+  if (wait > 0) { holdUntil = Date.now() + wait * 1000; holdTick(); return; }
   loadSession();
 }
 window.addEventListener("hashchange", route);
@@ -812,3 +866,66 @@ window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rall
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
 route();
 })();
+
+/* ------------------------------ navigation codes ------------------------------ */
+(function () {
+"use strict";
+
+var THEME_KEY = "pb_theme";
+var root = document.documentElement;
+var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function savedTheme() {
+  try { var t = localStorage.getItem(THEME_KEY); return t === "light" || t === "dark" ? t : null; } catch (e) { return null; }
+}
+function currentTheme() {
+  return savedTheme() || (mq && mq.matches ? "dark" : "light");
+}
+function setTheme(t) {
+  root.setAttribute("data-theme", t);
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+  paint();
+}
+
+// Ang nav ay nasa labas ng #app, kaya hindi ito nabubura tuwing nagre-render ang scoreboard.
+var nav = document.createElement("div");
+nav.id = "nav";
+nav.innerHTML =
+  '<button type="button" class="nav-toggle" id="nav-toggle" aria-label="Menu" aria-expanded="false" aria-controls="nav-panel">☰</button>' +
+  '<div class="nav-panel" id="nav-panel" hidden>' +
+  '<div class="nav-title">Appearance</div>' +
+  '<div class="row">' +
+  '<button type="button" class="btn sm" data-theme-set="light">☀️ Light</button>' +
+  '<button type="button" class="btn sm" data-theme-set="dark">🌙 Dark</button>' +
+  "</div></div>";
+document.body.insertBefore(nav, document.getElementById("app"));
+
+var toggle = document.getElementById("nav-toggle");
+var panel = document.getElementById("nav-panel");
+
+// Ang napiling theme ay punô ang kulay ng button; ang hindi napili ay may balangkas lang.
+function paint() {
+  var cur = currentTheme();
+  nav.querySelectorAll("[data-theme-set]").forEach(function (b) {
+    b.classList.toggle("sec", b.getAttribute("data-theme-set") !== cur);
+  });
+}
+function openNav(open) {
+  panel.hidden = !open;
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+toggle.addEventListener("click", function () { openNav(panel.hidden); });
+nav.addEventListener("click", function (e) {
+  var b = e.target.closest ? e.target.closest("[data-theme-set]") : null;
+  if (b) setTheme(b.getAttribute("data-theme-set"));
+});
+document.addEventListener("click", function (e) { if (!nav.contains(e.target)) openNav(false); });
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") openNav(false); });
+if (mq && mq.addEventListener) mq.addEventListener("change", paint);
+
+var saved = savedTheme();
+if (saved) root.setAttribute("data-theme", saved);
+paint();
+})();
+/* ------------------------------ end of navigation codes ------------------------------ */
