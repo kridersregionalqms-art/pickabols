@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-EPt027LPPqlqho1hDmrjCa+3GUoT2cc4Rd7rLmCo4zE='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-inZJf4bDlIQm1E6D7ZO1DlLprUV+8ZNGeqaflF+LRVw='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
 <title>Pickleball Open Play</title>
 <link rel="icon" href="data:,">
 <style>
@@ -81,6 +81,9 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .cname{font-weight:800;font-size:.88rem;word-break:break-word}
 .crole{font-weight:800;font-size:.66rem;text-transform:uppercase;letter-spacing:.04em}
 .cside{font-size:.68rem;font-weight:700;opacity:.9}
+.cpts{font-size:.66rem;font-weight:700;opacity:.95}
+.cc.tap{cursor:pointer;user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.cc.tap:active{filter:brightness(1.25)}
 .cband{background:#a9cbef;color:#1b2430;text-align:center;font-weight:800;padding:5px 0;border-top:1px solid #7da6d2}
 .callrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(70px,1fr));gap:6px;margin:8px 0 4px}
 .callbox{border:2px solid var(--line);border-radius:10px;text-align:center;padding:5px 3px}
@@ -242,7 +245,8 @@ function startNext(d, forced) {
     serverNum: d.mode === "doubles" ? 2 : 1,
     posA: n.teamA.slice(), posB: n.teamB.slice(),
     serverId: (first === "A" ? n.teamA : n.teamB)[0],
-    target: d.target, done: false, stack: []
+    target: d.target, done: false, stack: [],
+    track: !!d.analytics, pts: {}, rw: {}
   };
   [].concat(n.teamA, n.teamB).forEach(function (id) {
     d.players.forEach(function (p) { if (p.id === id) { p.games = num(p.games) + 1; p.last = n.round; } });
@@ -328,12 +332,13 @@ function checkDone(c) {
 }
 // Ang nagse-serve lang ang nakaka-score. Kapag natalo ang server: doubles server 1 -> server 2;
 // server 2 (o singles) -> side out, ang kabilang team ang magse-serve.
-function rally(d, winner) {
+function rally(d, winner, pid) {
   var c = d.current;
   if (!c || c.done) return;
   c.stack = c.stack || [];
   ensurePos(c);
-  c.stack.push([c.scoreA, c.scoreB, c.server, c.serverNum, c.posA.slice(), c.posB.slice(), c.serverId]);
+  var scored = winner === c.server;
+  c.stack.push([c.scoreA, c.scoreB, c.server, c.serverNum, c.posA.slice(), c.posB.slice(), c.serverId, pid || null, (pid && scored) ? 1 : 0]);
   if (c.stack.length > 40) c.stack.shift();
   if (winner === c.server) {
     if (winner === "A") c.scoreA = num(c.scoreA) + 1; else c.scoreB = num(c.scoreB) + 1;
@@ -349,7 +354,21 @@ function rally(d, winner) {
     // side-out: the new serving team's right-side player serves first
     c.serverId = (c.server === "A" ? c.posA : c.posB)[0];
   }
+  // Analytics mode: itala ang rally na napanalunan ng player, at ang puntos kung ang serving team ang nanalo.
+  if (pid && c.track) {
+    c.rw = c.rw || {};
+    c.rw[pid] = num(c.rw[pid]) + 1;
+    if (scored) { c.pts = c.pts || {}; c.pts[pid] = num(c.pts[pid]) + 1; }
+  }
   checkDone(c);
+}
+// Analytics mode: ang player na na-tap ang nanalo ng rally. Ang team niya ang basehan ng score, tulad ng dati.
+function rallyBy(d, pid) {
+  var c = d.current;
+  if (!c || c.done || !c.track || typeof pid !== "string") return;
+  var winner = c.teamA.indexOf(pid) >= 0 ? "A" : c.teamB.indexOf(pid) >= 0 ? "B" : null;
+  if (!winner) return;
+  rally(d, winner, pid);
 }
 function undo(d) {
   var c = d.current;
@@ -357,15 +376,28 @@ function undo(d) {
   var s = c.stack.pop();
   c.scoreA = s[0]; c.scoreB = s[1]; c.server = s[2]; c.serverNum = s[3];
   if (s[4]) { c.posA = s[4]; c.posB = s[5]; c.serverId = s[6]; }
+  // Bawiin din ang rally at puntos ng player na na-tap (analytics mode).
+  if (s[7] && c.rw) {
+    c.rw[s[7]] = Math.max(0, num(c.rw[s[7]]) - 1);
+    if (s[8] && c.pts) c.pts[s[7]] = Math.max(0, num(c.pts[s[7]]) - 1);
+  }
   checkDone(c);
 }
 function finish(d) {
   var c = d.current;
   if (!c || !c.done) return;
+  // Analytics mode: isama ang rally at puntos ng bawat player sa natapos na laro: [pangalan, puntos, rally].
+  var ps = [];
+  if (c.track) {
+    [].concat(c.teamA, c.teamB).forEach(function (id) {
+      ps.push([pname(id), num((c.pts || {})[id]), num((c.rw || {})[id])]);
+    });
+  }
   d.history.push({
     round: c.round, a: c.teamA.map(function (i) { return pname(i); }),
     b: c.teamB.map(function (i) { return pname(i); }),
-    sa: num(c.scoreA), sb: num(c.scoreB), t: num(c.target)
+    sa: num(c.scoreA), sb: num(c.scoreB), t: num(c.target),
+    tr: c.track ? 1 : 0, ps: ps
   });
   d.current = null;
   ensureNext(d);
@@ -590,12 +622,17 @@ function receiverId(d, c) {
 function courtHtml(d, c) {
   ensurePos(c);
   var sv = c.serverId, rc = receiverId(d, c);
+  // Analytics mode: ang organizer ay nagta-tap sa player na nanalo ng rally.
+  var tap = isOrg && !!c.track && !c.done;
   function cell(id, side) {
     var role = id === sv ? "srv" : id === rc ? "rcv" : "";
     var tag = role === "srv" ? "Server" : role === "rcv" ? "Receiver" : "";
-    return '<div class="cc ' + role + '"><div class="cname">' + esc(pname(id)) + "</div>" +
+    return '<div class="cc ' + role + (tap ? " tap" : "") + '"' +
+      (tap ? ' data-act="tap" data-id="' + esc(id) + '" role="button" tabindex="0"' : "") + ">" +
+      '<div class="cname">' + esc(pname(id)) + "</div>" +
       (tag ? '<div class="crole">' + tag + "</div>" : "") +
-      '<div class="cside">' + side + "</div></div>";
+      '<div class="cside">' + side + "</div>" +
+      (c.track ? '<div class="cpts">' + num((c.pts || {})[id]) + " pts</div>" : "") + "</div>";
   }
   var h = '<div class="court">';
   if (d.mode === "doubles") {
@@ -648,6 +685,11 @@ function boardHtml(d, c) {
     if (c.done) {
       h += '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="save">✅ Save result</button>' +
         '<button class="btn sec" data-act="undo">↩ Undo</button></div>';
+    } else if (c.track) {
+      h += '<p class="muted center" style="margin-top:12px">Tap the player on the court who won the rally.</p>' +
+        '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="undo"' +
+        ((c.stack && c.stack.length) ? "" : " disabled") + '>↩ Undo</button></div>' +
+        '<p class="muted">If the serving team wins the rally, they get +1 point (credited to that player). If the receiving team wins, no point is scored but the serve changes.</p>';
     } else {
       h += '<div class="row" style="margin-top:14px">' +
         '<button class="btn a grow" data-act="rally" data-team="A">Team A won the rally</button>' +
@@ -774,6 +816,15 @@ function renderSession() {
       '<button class="btn sec" data-act="copy" data-what="view">Copy</button></div>' +
       '<p class="muted" id="copied"></p></div>';
   }
+  if (isOrg) {
+    h += '<div class="card"><div class="row"><h2 class="grow" style="margin:0">📊 Analytics: ' + (d.analytics ? "ON" : "OFF") + "</h2>" +
+      '<button class="btn sm ' + (d.analytics ? "sec" : "a") + '" data-act="analytics"' + (c ? " disabled" : "") + ">" +
+      (d.analytics ? "Turn off" : "Turn on") + "</button></div>" +
+      '<p class="muted">' + (d.analytics
+        ? "Tap the player on the court who won the rally. Stats are being tracked."
+        : "Score with the Team A/B buttons. No stats are tracked.") +
+      (c ? " This can only be changed between games." : "") + "</p></div>";
+  }
   if (c) {
     h += '<div class="card"><h2>Current game • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
   }
@@ -886,6 +937,8 @@ function handle(act, ds) {
     case "copy": copyText(base + "#/s/" + sid); break;
     case "share": shareView(base + "#/s/" + sid); break;
     case "rally": mutate(function (d) { rally(d, ds.team); }); break;
+    case "tap": mutate(function (d) { rallyBy(d, ds.id); }); break;
+    case "analytics": mutate(function (d) { if (!d.current) d.analytics = !d.analytics; }); break;
     case "undo": mutate(undo); break;
     case "save": mutate(finish); break;
     case "setup": mutate(startSetup); break;
