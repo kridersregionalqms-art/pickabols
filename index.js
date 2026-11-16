@@ -40,6 +40,8 @@ function esc(s) {
   });
 }
 function num(x) { x = Number(x); return isFinite(x) ? x : 0; }
+// Ilan ang ipapakita sa Top/Best. Whitelist: 3, 5 o 10 lang, kung hindi ay 5.
+function cleanTopN(n) { n = Number(n); return n === 3 || n === 5 || n === 10 ? n : 5; }
 function uid() { return Math.random().toString(36).slice(2, 8); }
 function $(id) { return document.getElementById(id); }
 function pairKey(a, b) { return a < b ? a + "|" + b : b + "|" + a; }
@@ -388,16 +390,17 @@ function topStats(d) {
     });
   });
   var pl = Object.keys(P).map(function (k) { return P[k]; });
+  var lim = cleanTopN(d.topN);
   function rank(a, b) { return b.w - a.w || b.diff - a.diff || byName(a, b); }
   return {
     games: games,
     doubles: d.mode === "doubles",
     scorers: pl.filter(function (p) { return p.pts > 0; })
-      .sort(function (a, b) { return b.pts - a.pts || b.rw - a.rw || byName(a, b); }).slice(0, 5),
+      .sort(function (a, b) { return b.pts - a.pts || b.rw - a.rw || byName(a, b); }).slice(0, lim),
     rallies: pl.filter(function (p) { return p.rw > 0; })
-      .sort(function (a, b) { return b.rw - a.rw || b.pts - a.pts || byName(a, b); }).slice(0, 5),
-    wins: pl.filter(function (p) { return p.w + p.l > 0; }).sort(rank).slice(0, 5),
-    teams: Object.keys(T).map(function (k) { return T[k]; }).sort(rank).slice(0, 5)
+      .sort(function (a, b) { return b.rw - a.rw || b.pts - a.pts || byName(a, b); }).slice(0, lim),
+    wins: pl.filter(function (p) { return p.w + p.l > 0; }).sort(rank).slice(0, lim),
+    teams: Object.keys(T).map(function (k) { return T[k]; }).sort(rank).slice(0, lim)
   };
 }
 
@@ -801,6 +804,8 @@ function renderSession() {
     h += '<div class="card"><div class="row"><h2 class="grow" style="margin:0">📊 Analytics: ' + (d.analytics ? "ON" : "OFF") + "</h2>" +
       '<button class="btn sm ' + (d.analytics ? "sec" : "a") + '" data-act="analytics"' + (c ? " disabled" : "") + ">" +
       (d.analytics ? "Turn off" : "Turn on") + "</button></div>" +
+      '<label>Show Top how many to everyone?</label><select data-act="topn">' +
+      [3, 5, 10].map(function (t) { return "<option value=\"" + t + "\"" + (cleanTopN(d.topN) === t ? " selected" : "") + ">Top " + t + "</option>"; }).join("") + "</select>" +
       '<p class="muted">' + (d.analytics
         ? "Tap the player on the court who won the rally. Stats are being tracked."
         : "Score with the Team A/B buttons. No stats are tracked.") +
@@ -969,6 +974,10 @@ document.addEventListener("change", function (e) {
     var v = num(t.value);
     mutate(function (d) { d.target = v; });
   }
+  if (t && t.dataset && t.dataset.act === "topn") {
+    var tn = cleanTopN(t.value);
+    mutate(function (d) { d.topN = tn; });
+  }
 });
 document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); } });
 
@@ -1053,7 +1062,7 @@ window.__pbTop = function () { return data ? topStats(data) : null; };
 // Para sa "Best" sa navigation: ranking bawat source ng score. Null kung OFF ang Analytics.
 function bestStats(d) {
   if (!d || !d.analytics) return null;
-  var tot = Object.create(null), games = 0, lists = Object.create(null);
+  var tot = Object.create(null), games = 0, lists = Object.create(null), lim = cleanTopN(d.topN);
   SOURCES.forEach(function (s) { tot[s[0]] = Object.create(null); });
   (d.history || []).forEach(function (m) {
     if (num(m.tr) !== 1) return;
@@ -1071,7 +1080,7 @@ function bestStats(d) {
     lists[s[0]] = Object.keys(o).map(function (n) { return { name: n, n: o[n] }; })
       .filter(function (x) { return x.n > 0; })
       .sort(function (a, b) { return b.n - a.n || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); })
-      .slice(0, 5);
+      .slice(0, lim);
   });
   return { games: games, sources: SOURCES.map(function (s) { return [s[0], s[1]]; }), lists: lists };
 }
@@ -1144,6 +1153,13 @@ var label = el("span", "nav-label");
 themeBtn.appendChild(icon);
 themeBtn.appendChild(label);
 
+// Logo sa itaas ng sidebar. Fixed ang src at alt, walang galing sa user.
+var navLogo = document.createElement("img");
+navLogo.className = "nav-logo";
+navLogo.src = "logo.png";
+navLogo.alt = "Pickabol";
+navLogo.decoding = "async";
+nav.appendChild(navLogo);
 nav.appendChild(el("div", "nav-title", "Menu"));
 nav.appendChild(themeBtn);
 
