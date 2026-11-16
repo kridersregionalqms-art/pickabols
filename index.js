@@ -826,6 +826,10 @@ function pendingHtml(d) {
     var mm = Math.floor(remain / 60), ss = remain % 60;
     var timeStr = mm + ":" + (ss < 10 ? "0" : "") + ss;
     h += '<div class="warmupbox"><div class="wlabel">⏱ WARM UP</div><div class="wtime">' + timeStr + '</div></div>';
+    // Organizer lang, at habang tumatakbo pa ang oras. Kapag tapos na ang oras, "Play for serve now" na ang button.
+    if (isOrg && remain > 0) {
+      h += '<div class="row" style="margin-top:8px"><button class="btn sec" data-act="warmup-stop">✕ Cancel warm-up</button></div>';
+    }
     if (remain <= 0) {
       h += '<p class="muted center">Time\'s up!' + (isOrg ? "" : " Waiting for the organizer...") + "</p>";
       if (isOrg) h += '<div class="row" style="margin-top:8px"><button class="btn grow" data-act="toss-direct">🪙 Play for serve now</button></div>';
@@ -1024,6 +1028,12 @@ function handle(act, ds) {
     case "toss-direct": mutate(function (d) { if (d.pending) d.pending.phase = "serve"; }); break;
     case "warmup-ask": warmupInputOpen = true; render(); break;
     case "warmup-cancel": warmupInputOpen = false; render(); break;
+    case "warmup-stop":
+      // Ititigil ang countdown at babalik sa "choose". Tinitingnan ulit ang phase para hindi mag-banggaan sa timer na patapos na.
+      mutate(function (d) {
+        if (d.pending && d.pending.phase === "warmup") { d.pending.phase = "choose"; d.pending.minutes = 0; d.pending.endsAt = 0; }
+      });
+      break;
     case "warmup-start":
       var warmMin = num(($("f-warmup-min") || {}).value) || 5;
       warmupInputOpen = false;
