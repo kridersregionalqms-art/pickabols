@@ -254,7 +254,7 @@ function genNext(d) {
 }
 // Iisang logic ng pagpili ng susunod na laro para sa kahit anong court. skip = mga id na hindi puwedeng kunin (naka-reserve o naglalaro sa ibang court).
 // Ibinabalik ang { teamA, teamB, round }, o null kung kulang ang libreng player.
-function pickGame(d, skip) {
+function pickGame(d, skip, avoid) {
   d.partners = d.partners || {};
   d.opps = d.opps || {};
   var k = need(d);
@@ -265,7 +265,9 @@ function pickGame(d, skip) {
   if (useCu) clearCaught(d);
   var pool = act.map(function (p) { return { p: p, r: Math.random() }; })
     .sort(function (x, y) {
-      return num(x.p.games) - num(y.p.games) || num(x.p.last) - num(y.p.last) || x.r - y.r;
+      // avoid (para sa Shuffle): ang mga player na nasa kasalukuyang "Next game" ay huling pipiliin
+      var ax = avoid && avoid[x.p.id] === 1 ? 1 : 0, ay = avoid && avoid[y.p.id] === 1 ? 1 : 0;
+      return ax - ay || num(x.p.games) - num(y.p.games) || num(x.p.last) - num(y.p.last) || x.r - y.r;
     }).map(function (x) { return x.p; });
   var c, A, B;
   if (useCu) {
@@ -295,6 +297,14 @@ function pickGame(d, skip) {
     A = best[0]; B = best[1];
   }
   return { teamA: A, teamB: B, round: num(d.round) + 1 };
+}
+// Shuffle again: iwasan ang mga player ng kasalukuyang "Next game" hangga't may ibang libreng player.
+function shuffleNext(d) {
+  var avoid = Object.create(null);
+  if (d.next && Array.isArray(d.next.teamA) && Array.isArray(d.next.teamB)) {
+    d.next.teamA.concat(d.next.teamB).forEach(function (id) { if (typeof id === "string") avoid[id] = 1; });
+  }
+  d.next = pickGame(d, reservedIds(d, 1), avoid);
 }
 function startNext(d, forced) {
   if (d.current) return;
@@ -1879,7 +1889,7 @@ function handle(act, ds) {
     case "serve-b": mutate(function (d) { resolveServeRally(d, "B"); }); break;
     case "serve-redo": mutate(function (d) { if (d.pending) { d.pending.winner = null; d.pending.phase = "serve"; } }); break;
     case "begin": warmupInputOpen = false; mutate(beginGame); break;
-    case "shuffle": mutate(genNext); break;
+    case "shuffle": mutate(shuffleNext); break;
     case "rebuild": mutate(rebuildTeams); break;
     case "swap": mutate(function (d) { swapTeamSides(d, ds.team); }); break;
     case "rest":
