@@ -84,7 +84,7 @@ function cleanCourtMatches(arr) {
     if (!sv || (sn !== 1 && sn !== 2) || !sameSet(pA, A) || !sameSet(pB, B)) return;
     if (typeof x.m.serverId !== "string" || (sv === "A" ? pA : pB).indexOf(x.m.serverId) < 0) return;
     seen[ct] = 1;
-    out.push({ ct: ct, id: x.id, v: v, m: {
+    out.push({ ct: ct, id: x.id, v: v, sv: x.sv === true, m: {
       dbl: dbl, teamA: A, teamB: B, posA: pA, posB: pB, scoreA: sa, scoreB: sb, target: tg, done: x.m.done === true,
       server: sv, serverNum: sn, serverId: x.m.serverId, u: u === null ? 0 : u
     } });
@@ -1241,14 +1241,21 @@ function scorerHtml(d) {
   }
   var m = cm.m;
   var offRally = (courtBusy || m.done) ? " disabled" : "";
-  var offUndo = (courtBusy || !m.u) ? " disabled" : "";
+  var offUndo = (courtBusy || !m.u || cm.sv === true) ? " disabled" : ""; // hindi na mababawi kapag naitala na (ganito rin ang Worker)
   h += '<div class="card"><h2>Court ' + num(myCourt) + " • Current game</h2>" + boardHtml(d, courtAsCurrent(m)) +
     '<div class="row" style="margin-top:14px">' +
     '<button class="btn a grow" data-act="court-rally" data-team="A"' + offRally + ">Team A won the rally</button>" +
     '<button class="btn b grow" data-act="court-rally" data-team="B"' + offRally + ">Team B won the rally</button></div>" +
+    (m.done && cm.sv !== true
+      ? '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="court-save"' + (courtBusy ? " disabled" : "") + ">✅ Save result</button></div>"
+      : "") +
     '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="court-undo"' + offUndo + ">↩ Undo</button></div>" +
     '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
-    (m.done ? '<p class="muted center">This game is finished. The next game will appear here when it is ready.</p>' : "") + "</div>";
+    (m.done
+      ? (cm.sv === true
+        ? '<p class="muted center">Result saved. The next game will appear here when it is ready.</p>'
+        : '<p class="muted center">This game is finished. Tap Save result to record it.</p>')
+      : "") + "</div>";
   h += courtNextHtml(d, myCourt) + playersReadHtml(d);
   h += '<div class="card"><button class="btn sec sm" data-act="court-leave">✕ Cancel as scorer for this court</button>' +
     '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
@@ -1450,6 +1457,7 @@ async function sendCourtScore(act, team) {
       else if (r.status === 429) toast("Too many taps. Please wait a moment.");
       else if (er === "Match finished") toast("This game is already finished.");
       else if (er === "Nothing to undo") toast("Nothing to undo.");
+      else if (er === "Already saved") toast("This result is already saved.");
       else if (r.status === 409) toast("The score changed. Showing the latest.");
       else toast("Could not save the score. Please try again.");
     }
@@ -1457,6 +1465,50 @@ async function sendCourtScore(act, team) {
     toast("Could not save the score. Please try again.");
   }
   if (sid === mySid) await pollOnce(); // kunin ang bagong state mula sa D1
+  courtBusy = false;
+  if (sid === mySid) render();
+}
+// Scorer lang. Nagpapadala ng "save result" para sa natapos na laro ng court niya. Ang Worker ang may huling pasya
+// (role, court, match ID, version, tapos na ba ang laro). Ligtas ulitin: hindi nadodoble ang resulta sa history.
+async function sendCourtSave() {
+  if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
+  var court = myCourt;
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return; // whitelist
+  var cm = null;
+  courtMatches.forEach(function (x) { if (x.ct === court) cm = x; });
+  var t = devToken();
+  if (!cm || !t || !cm.m || cm.m.done !== true || cm.sv === true) return; // tapos na at hindi pa saved lang
+  courtBusy = true;
+  render();
+  var mySid = sid;
+  var ctl = new AbortController();
+  var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: JSON.stringify({ match: cm.id, v: cm.v }),
+      signal: ctl.signal
+    });
+    if (r.ok) {
+      toast("Result saved \u2713");
+    } else {
+      var j = null;
+      try { j = await r.json(); } catch (e2) {}
+      var er = j && typeof j.error === "string" ? j.error : "";
+      // Fixed na teksto lang ang ipinapakita; hindi inilalabas ang galing sa server.
+      if (r.status === 403) { toast("You are no longer the scorer for this court."); pullMe(); }
+      else if (r.status === 429) toast("Too many taps. Please wait a moment.");
+      else if (er === "Match not finished") toast("This game is not finished yet.");
+      else if (r.status === 409) toast("The score changed. Showing the latest.");
+      else toast("Could not save the result. Please try again.");
+    }
+  } catch (e) {
+    toast("Could not save the result. Please try again.");
+  } finally {
+    clearTimeout(tmo);
+  }
+  if (sid === mySid) await pollOnce(); // kunin ang bagong state (sv = true)
   courtBusy = false;
   if (sid === mySid) render();
 }
@@ -1528,6 +1580,7 @@ function handle(act, ds) {
     case "reload": loadSession(); break;
     case "court-rally": sendCourtScore("rally", ds.team); break;
     case "court-undo": sendCourtScore("undo", null); break;
+    case "court-save": sendCourtSave(); break;
     case "court-leave":
       if (isOrg || myRole !== "scorer") break;
       if (window.confirm("Stop being the scorer for this court?")) sendLeaveScorer();
