@@ -2953,7 +2953,13 @@ function fillTop(st, kind) {
   }
 }
 function topNow() {
-  try { return typeof window.__pbTop === "function" ? window.__pbTop() : null; } catch (e) { return null; }
+  try {
+    var st = typeof window.__pbTop === "function" ? window.__pbTop() : null;
+    if (st) return st;
+    // Top and Best must use the same Analytics gate. Keep Top available even when its lists are empty.
+    if (data && data.analytics) return { games: 0, doubles: data.mode === "doubles", scorers: [], rallies: [], wins: [], teams: [] };
+    return null;
+  } catch (e) { return null; }
 }
 function closeTop() {
   topBox.hidden = true;
@@ -3037,10 +3043,11 @@ function openTop(kind) {
 // Sinusundan ang pagbabago ng page (live updates, toggle ng Analytics) para laging tama ang button at ang listahan.
 function refreshTop() {
   var st = topNow();
+  var analytics = !!bestNow();
   refreshBest();
   refreshSettings();
-  topBtn.hidden = !st;
-  if (!st) {
+  topBtn.hidden = !analytics;
+  if (!analytics || !st) {
     topSub.hidden = true;
     topCaret.textContent = "\u25BE";
     topBtn.setAttribute("aria-expanded", "false");
