@@ -2099,6 +2099,26 @@ function paintDevices() {
       li.appendChild(appBtn);
       li.appendChild(decBtn);
     }
+    // Naka-approve na (scorer na ang device): Cancel button na lang, wala nang Approve/Decline.
+    // Court 0 = ibalik sa viewer. Ang Worker pa rin ang may huling pasya (organizer key, whitelist ng handle at court).
+    if (it.court && !it.mine) {
+      var cancelHandle = it.handle;
+      var cancelLine = el("div", "muted");
+      cancelLine.style.width = "100%";
+      cancelLine.textContent = "Court " + it.court + " scorer";
+      li.appendChild(cancelLine);
+      var canBtn = el("button", "btn sec sm", "Cancel");
+      canBtn.type = "button";
+      canBtn.addEventListener("click", function (e) {
+        if (!e.isTrusted) return; // click na gawa ng script, balewalain
+        var stNow = settingsNow();
+        if (!stNow || !stNow.org) return;
+        if (!window.confirm("Cancel this device as scorer?")) return;
+        devSig = ""; // para ma-redraw mula sa totoong data pagkatapos
+        if (typeof window.__pbAssign === "function") window.__pbAssign(cancelHandle, 0);
+      });
+      li.appendChild(canBtn);
+    }
     // Wala nang dropdown sa sariling device ng organizer. Mayroon lang kung may Multi-court o may scorer role na.
     if (!it.mine && (courts >= 2 || it.court)) {
       var sel = document.createElement("select");
