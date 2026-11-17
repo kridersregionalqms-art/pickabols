@@ -44,6 +44,9 @@ function esc(s) {
 function num(x) { x = Number(x); return isFinite(x) ? x : 0; }
 // Ilan ang ipapakita sa Top/Best. Whitelist: 3, 5 o 10 lang, kung hindi ay 5.
 function cleanTopN(n) { n = Number(n); return n === 3 || n === 5 || n === 10 ? n : 5; }
+// Bilang ng courts. Whitelist: buong bilang na 1 hanggang MAX_COURTS lang, kung hindi ay 1 (ang lumang session ay 1 court).
+var MAX_COURTS = 6; // dapat pareho sa MAX_COURTS ng Worker
+function cleanCourts(n) { n = Number(n); return Number.isInteger(n) && n >= 1 && n <= MAX_COURTS ? n : 1; }
 function uid() { return Math.random().toString(36).slice(2, 8); }
 function $(id) { return document.getElementById(id); }
 function pairKey(a, b) { return a < b ? a + "|" + b : b + "|" + a; }
@@ -986,6 +989,8 @@ function renderSession() {
   if (isOrg) {
     h += '<p class="muted">📊 Analytics: <strong>' + (d.analytics ? "ON" : "OFF") + "</strong> • " +
       (c ? "locked until this game ends" : "change it in ☰ Settings before starting a game") + "</p>";
+    h += '<p class="muted">🏟 Courts: <strong>' + cleanCourts(d.courts) + "</strong> • " +
+      (c ? "locked until this game ends" : "change it in ☰ Multi-court before starting a game") + "</p>";
   }
   if (c) {
     h += '<div class="card"><h2>Current game • Round ' + num(c.round) + "</h2>" + boardHtml(d, c) + "</div>";
@@ -1318,7 +1323,7 @@ window.__pbHome = function (view) {
 window.__pbSettings = function () {
   if (!data) return null;
   return {
-    org: isOrg, analytics: !!data.analytics, topN: cleanTopN(data.topN), locked: !!data.current,
+    org: isOrg, analytics: !!data.analytics, topN: cleanTopN(data.topN), courts: cleanCourts(data.courts), locked: !!data.current,
     // Listahan lang ng mga player na may piniling catch-up setting (display lang).
     cuList: data.players.filter(function (p) { return p.cm === "l" || p.cm === "a" || p.cm === "b"; })
       .map(function (p) { return { name: String(p.name), cm: p.cm, cu: p.cu === true, active: p.active !== false }; })
@@ -1332,6 +1337,10 @@ window.__pbSet = function (what, val) {
   } else if (what === "topn") {
     var tn = cleanTopN(val);
     mutate(function (d) { d.topN = tn; });
+  } else if (what === "courts") {
+    var cn = Math.floor(Number(val));
+    if (!(cn >= 1 && cn <= MAX_COURTS)) return; // hindi tatanggapin ang kakaibang halaga
+    mutate(function (d) { if (!d.current) d.courts = cn; }); // naka-lock habang may tumatakbong laro
   }
 };
 // Para sa Settings sa navigation: listahan ng devices. Organizer lang ang may laman, ang iba ay walang makukuha.
@@ -1526,6 +1535,78 @@ bestBtn.addEventListener("click", function () {
   bestCaret.textContent = bestSub.hidden ? "\u25BE" : "\u25B4";
   bestBtn.setAttribute("aria-expanded", bestSub.hidden ? "false" : "true");
 });
+// ---- Multi-court (organizer lang) ----
+// Fixed na teksto lang at textContent lang ang gamit. Ang value ay dumadaan sa window.__pbSet, na may sariling whitelist.
+var mcBtn = el("button", "btn sec nav-theme");
+mcBtn.type = "button";
+mcBtn.id = "mc-btn";
+mcBtn.hidden = true;
+mcBtn.setAttribute("aria-expanded", "false");
+mcBtn.appendChild(el("span", "nav-icon", "\uD83C\uDFDF\uFE0F"));
+mcBtn.appendChild(el("span", "nav-label", "Multi-court"));
+var mcCaret = el("span", "nav-icon nav-caret", "\u25BE");
+mcBtn.appendChild(mcCaret);
+nav.appendChild(mcBtn);
+
+var mcSub = el("div", "nav-sub");
+mcSub.hidden = true;
+var mcSw = makeSwitch("Multi-court");
+var mcNote = el("p", "muted");
+var mcLabel = el("label", "", "Number of courts");
+var mcSel = document.createElement("select");
+[2, 3, 4, 5, 6].forEach(function (n) {
+  var o = document.createElement("option");
+  o.value = String(n);
+  o.textContent = n + " courts";
+  mcSel.appendChild(o);
+});
+mcSub.appendChild(mcSw.row);
+mcSub.appendChild(mcNote);
+mcSub.appendChild(mcLabel);
+mcSub.appendChild(mcSel);
+nav.appendChild(mcSub);
+
+function refreshMulti() {
+  var st = settingsNow();
+  var show = !!(st && st.org);
+  mcBtn.hidden = !show;
+  if (!show) {
+    mcSub.hidden = true;
+    mcCaret.textContent = "\u25BE";
+    mcBtn.setAttribute("aria-expanded", "false");
+    return;
+  }
+  var on = st.courts >= 2;
+  paintSwitch(mcSw, on, st.locked);
+  mcNote.textContent = st.locked
+    ? "Can only be changed between games."
+    : (on ? "Court 1 is yours. Other courts are scored by devices you choose." : "Off: one court only.");
+  mcLabel.hidden = !on;
+  mcSel.hidden = !on;
+  mcSel.disabled = !!st.locked;
+  if (on) mcSel.value = String(st.courts);
+}
+mcBtn.addEventListener("click", function (e) {
+  if (!e.isTrusted) return; // click na gawa ng script, balewalain
+  var st = settingsNow();
+  if (!st || !st.org) return;
+  mcSub.hidden = !mcSub.hidden;
+  mcCaret.textContent = mcSub.hidden ? "\u25BE" : "\u25B4";
+  mcBtn.setAttribute("aria-expanded", mcSub.hidden ? "false" : "true");
+});
+mcSw.row.addEventListener("click", function (e) {
+  if (!e.isTrusted) return;
+  var st = settingsNow();
+  if (!st || !st.org || st.locked) return; // huwag magtiwala sa "disabled" ng button, tingnan ulit ang totoong state
+  if (typeof window.__pbSet === "function") window.__pbSet("courts", st.courts >= 2 ? "1" : "2");
+});
+mcSel.addEventListener("change", function (e) {
+  if (!e.isTrusted) return;
+  var st = settingsNow();
+  if (!st || !st.org || st.locked) return;
+  if (typeof window.__pbSet === "function") window.__pbSet("courts", mcSel.value);
+});
+
 // ---- Settings (footer ng sidebar) ----
 var setWrap = el("div", "nav-foot");
 
@@ -1628,6 +1709,7 @@ function settingsNow() {
 }
 // Organizer lang ang nakakakita ng Settings (Analytics at Top N). Ang viewer ay walang Settings, Dark mode lang sa footer.
 function refreshSettings() {
+  refreshMulti();
   var st = settingsNow();
   var show = !!(st && st.org);
   orgBox.hidden = !show;
