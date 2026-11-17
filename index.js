@@ -1559,15 +1559,30 @@ function courtSetupHtml(d) {
   var ok = !!n && Array.isArray(n.teamA) && Array.isArray(n.teamB) &&
     n.teamA.concat(n.teamB).every(function (id) { return d.players.some(function (p) { return p.id === id; }); });
   var cancel = '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="cs-cancel"' + dis + ">Cancel</button></div>";
-  var h = '<div class="card"><h2>' + (su ? "Starting next game" : "Next game for Court " + ct) + "</h2>";
+  var h = '<div class="card"><h2>' + (su ? "Starting next game" : ok ? "Next game is ready" : "Next game for Court " + ct) + "</h2>";
   if (!ok) {
     h += '<p class="muted">Not ready yet. Waiting for enough free players.</p>';
     return h + (su ? cancel : "") + "</div>";
   }
   var nmA = esc(teamNames(n.teamA)), nmB = esc(teamNames(n.teamB));
-  h += "<p><strong>" + nmA + '</strong> <span class="muted">vs</span> <strong>' + nmB + "</strong></p>";
+  var grid = d.mode === "doubles" && n.teamA.length === 2 && n.teamB.length === 2;
+  if (su || !grid) h += "<p><strong>" + nmA + '</strong> <span class="muted">vs</span> <strong>' + nmB + "</strong></p>";
   if (!su) {
-    h += '<div class="row"><button class="btn grow" data-act="cs-open"' + dis + ">▶ Start game</button></div>";
+    if (grid) {
+      // Parehong ayos ng sa organizer. Fixed na teksto lang; ang mga pangalan ay dumadaan sa esc().
+      var cs = "text-align:center;padding:4px 10px;";
+      var cell = function (side, id) {
+        return '<td style="' + cs + '"><div class="muted">' + side + "</div><strong>" + esc(pname(id)) + "</strong></td>";
+      };
+      var sw = function (team) {
+        return '<td style="' + cs + '"><button class="btn sec sm" data-act="cs-swap" data-team="' + team + '"' + dis + ">🔄 Swap House</button></td>";
+      };
+      h += '<div class="row" style="margin-bottom:8px"><button class="btn sec sm" data-act="cs-rebuild"' + dis + ">🔧 Rebuild</button></div>" +
+        '<table><tr><td style="' + cs + '">Team A</td>' + cell("Right", n.teamA[0]) + cell("Left", n.teamA[1]) + sw("A") + "</tr>" +
+        '<tr><td style="' + cs + '">Team B</td>' + cell("Left", n.teamB[1]) + cell("Right", n.teamB[0]) + sw("B") + "</tr></table>";
+    }
+    h += '<div class="row" style="margin-top:8px"><button class="btn grow" data-act="cs-open"' + dis + ">▶ Start game</button>" +
+      '<button class="btn sec" data-act="cs-shuffle"' + dis + ">🔀 Shuffle again</button></div>";
   } else if (su.ph === "choose") {
     if (csWarmOpen) {
       h += '<label>Warm-up minutes</label><input type="text" id="f-cs-min" inputmode="numeric" value="5" style="max-width:120px">' +
@@ -1608,6 +1623,7 @@ function csToast(status, er) {
   else if (er === "Save the result first") toast("Save the result of the last game first.");
   else if (er === "Players busy") toast("Some players are still on another court.");
   else if (er === "Not ready") toast("The next game is not ready yet.");
+  else if (er === "Not allowed now") toast("This step is no longer available.");
   else if (er === "Game in progress") toast("The current game is not finished yet.");
   else if (status === 409) toast("That step is no longer available. Showing the latest.");
   else toast("Could not do that. Please try again.");
@@ -1648,6 +1664,45 @@ async function sendCourtSetup(act, team, minutes) {
     }
   } catch (e) {
     toast("Could not do that. Please try again.");
+  } finally {
+    clearTimeout(tmo);
+  }
+  if (sid === mySid) await pollOnce();
+  courtBusy = false;
+  if (sid === mySid) render();
+}
+var CN_ACTS = ["rebuild", "swap", "shuffle"]; // whitelist; dapat pareho sa Worker
+// Scorer lang. Rebuild / Swap House / Shuffle ng susunod na laro. Ang Worker ang nagbabago at may huling pasya.
+async function sendCourtNext(act, team) {
+  if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
+  if (CN_ACTS.indexOf(act) < 0) return;
+  if (act === "swap" && team !== "A" && team !== "B") return;
+  var court = myCourt;
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
+  if (courtSetupOf(court)) return; // nagsimula na ang paghahanda ng laro
+  var t = devToken();
+  if (!t) return;
+  var body = { act: act };
+  if (act === "swap") body.team = team;
+  courtBusy = true;
+  render();
+  var mySid = sid;
+  var ctl = new AbortController();
+  var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: JSON.stringify(body),
+      signal: ctl.signal
+    });
+    if (!r.ok) {
+      var j = null;
+      try { j = await r.json(); } catch (e2) {}
+      csToast(r.status, j && typeof j.error === "string" ? j.error : "");
+    }
+  } catch (e) {
+    toast("Could not change the next game. Please try again.");
   } finally {
     clearTimeout(tmo);
   }
@@ -1759,6 +1814,9 @@ function handle(act, ds) {
     case "court-undo": sendCourtScore("undo", null); break;
     case "court-save": sendCourtSave(); break;
     case "cs-open": sendCourtSetup("open"); break;
+    case "cs-rebuild": sendCourtNext("rebuild", null); break;
+    case "cs-swap": sendCourtNext("swap", ds.team); break;
+    case "cs-shuffle": sendCourtNext("shuffle", null); break;
     case "cs-serve": sendCourtSetup("serve"); break;
     case "cs-warm-ask": if (!isOrg && myRole === "scorer") { csWarmOpen = true; render(); } break;
     case "cs-warm-back": csWarmOpen = false; render(); break;
