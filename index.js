@@ -517,6 +517,7 @@ async function loadSession() {
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
     render();
+    registerDevice(); // kukuha ng device identity sa background; kung pumalya, tuloy pa rin ang app
     if (!isOrg) startLive();
   } catch (e) {
     loadError = "Could not connect. Please try again in a moment.";
@@ -532,6 +533,38 @@ async function pollOnce() {
     lastSync = new Date().toLocaleTimeString();
     if (j.version !== version && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
+  } catch (e) {}
+}
+
+/* ---------- device identity ---------- */
+// Ang secret token ay nasa device lang na ito. Hindi ito ipinapakita, hindi nilalagay sa URL, at hash lang ang nasa server.
+var devHandle = null; // public handle ng device na ito sa session (hindi sikreto)
+function devToken() {
+  try {
+    var t = localStorage.getItem("pb_dev");
+    if (typeof t === "string" && /^[a-f0-9]{32}$/.test(t)) return t; // tama lang ang hugis ang tatanggapin
+    var b = crypto.getRandomValues(new Uint8Array(16));
+    t = Array.prototype.map.call(b, function (x) { return ("0" + x.toString(16)).slice(-2); }).join("");
+    localStorage.setItem("pb_dev", t);
+    return t;
+  } catch (e) { return null; }
+}
+async function registerDevice() {
+  devHandle = null;
+  var t = devToken();
+  if (!t || !sid) return;
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: t })
+    });
+    if (!r.ok) return;
+    var j = await r.json();
+    // Huwag tanggapin kung nagbago na ang session, o kung kakaiba ang hugis ng handle.
+    if (sid !== mySid || !j || typeof j.handle !== "string" || !/^[A-Za-z0-9]{3,12}$/.test(j.handle)) return;
+    devHandle = j.handle;
   } catch (e) {}
 }
 
