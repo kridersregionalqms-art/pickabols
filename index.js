@@ -626,7 +626,7 @@ async function registerDevice() {
 }
 
 /* ---------- role ng device na ito (scorer o viewer) ---------- */
-var myRole = "viewer", myCourt = 0;
+var myRole = "viewer", myCourt = 0, myPending = false, myWant = 0;
 async function pullMe() {
   if (isOrg || !sid) return;
   var t = devToken();
@@ -643,7 +643,13 @@ async function pullMe() {
     var c = Number(j.court);
     var role = "viewer", court = 0;
     if (j.role === "scorer" && Number.isInteger(c) && c >= 2 && c <= MAX_COURTS) { role = "scorer"; court = c; }
-    if (role !== myRole || court !== myCourt) { myRole = role; myCourt = court; render(); }
+    var w = Number(j.want);
+    var pend = j.pending === true;
+    var want = pend && Number.isInteger(w) && w >= 2 && w <= MAX_COURTS ? w : 0;
+    if (role !== myRole || court !== myCourt || pend !== myPending || want !== myWant) {
+      myRole = role; myCourt = court; myPending = pend; myWant = want;
+      render();
+    }
   } catch (e) {}
 }
 
@@ -668,11 +674,14 @@ async function pullPresence() {
     devList = j.devices.slice(0, 150).filter(function (x) {
       return x && typeof x.handle === "string" && /^[A-Za-z0-9]{3,12}$/.test(x.handle);
     }).map(function (x) {
+      var w = Number(x.want);
       return {
         handle: x.handle,
         name: typeof x.name === "string" ? x.name.replace(/[<>\u0000-\u001f]/g, "").slice(0, 40) : "",
         online: x.online === true,
-        court: Number.isInteger(x.court) && x.court >= 2 && x.court <= MAX_COURTS ? x.court : 0
+        court: Number.isInteger(x.court) && x.court >= 2 && x.court <= MAX_COURTS ? x.court : 0,
+        pending: x.pending === true,
+        want: Number.isInteger(w) && w >= 2 && w <= MAX_COURTS ? w : 0
       };
     });
     if (typeof window.__pbRefreshDevices === "function") window.__pbRefreshDevices();
@@ -694,7 +703,7 @@ function wsUrl() { return API.replace(/^http/, "ws") + "/api/sessions/" + sid + 
 function stopLive() {
   clearInterval(presTimer);
   devList = [];
-  myRole = "viewer"; myCourt = 0;
+  myRole = "viewer"; myCourt = 0; myPending = false; myWant = 0;
   clearInterval(pollTimer);
   clearInterval(wsPing);
   clearTimeout(wsTimer);
@@ -1054,6 +1063,21 @@ function scorerHtml(d) {
     '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
   return h + live;
 }
+// Viewer lang. Dropdown + button para humiling maging scorer ng isang court. Ang server ang may huling pasya.
+function viewerRequestHtml(d) {
+  var nc = cleanCourts(d.courts);
+  if (nc < 2) return "";
+  if (myPending) {
+    return '<div class="card"><h2>Become a scorer</h2><p class="muted">Request sent for Court ' + num(myWant) +
+      '. Waiting for the organizer to approve.</p></div>';
+  }
+  var opts = "";
+  for (var c = 2; c <= nc; c++) opts += '<option value="' + c + '">Court ' + c + "</option>";
+  return '<div class="card"><h2>Become a scorer</h2>' +
+    '<p class="muted">Pick a court and ask the organizer to make you its scorer.</p>' +
+    '<div class="row"><select id="f-req-court">' + opts + '</select>' +
+    '<button class="btn sec" data-act="req-scorer">Request</button></div></div>';
+}
 function renderSession() {
   if (loadError) {
     $app.innerHTML = '<h1>🏓 Pickleball Open Play</h1><div class="card"><p class="err">' + esc(loadError) +
@@ -1089,6 +1113,7 @@ function renderSession() {
       return;
     }
     h += '<p class="muted">View only. Only the organizer can edit. Updates automatically, no need to reload • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
+    h += viewerRequestHtml(d);
   }
   if (isOrg) {
     h += '<div class="card"><h2>Share the scoreboard</h2>' +
@@ -1270,6 +1295,38 @@ async function sendLeaveScorer() {
   courtBusy = false;
   if (sid === mySid) render();
 }
+// Viewer lang. Humihiling na maging scorer ng piniling court. Ang server ang may huling pasya (cooldown, availability, atbp.).
+async function sendRequestScorer(court) {
+  if (isOrg || !sid || myRole !== "viewer" || courtBusy) return;
+  court = Number(court);
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
+  var t = devToken();
+  if (!t) return;
+  courtBusy = true;
+  render();
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: JSON.stringify({ court: court })
+    });
+    if (!r.ok) {
+      var j = null;
+      try { j = await r.json(); } catch (e2) {}
+      var er = j && typeof j.error === "string" ? j.error : "";
+      if (er === "Cooldown") toast("Please wait a bit before requesting again.");
+      else if (r.status === 429) toast("Too many requests. Please wait a moment.");
+      else if (er === "Court not available") toast("That court is not available.");
+      else toast("Could not send the request. Please try again.");
+    }
+  } catch (e) {
+    toast("Could not send the request. Please try again.");
+  }
+  if (sid === mySid) await pullMe();
+  courtBusy = false;
+  if (sid === mySid) render();
+}
 function handle(act, ds) {
   var base = location.origin + location.pathname;
   switch (act) {
@@ -1284,6 +1341,11 @@ function handle(act, ds) {
     case "court-leave":
       if (isOrg || myRole !== "scorer") break;
       if (window.confirm("Stop being the scorer for this court?")) sendLeaveScorer();
+      break;
+    case "req-scorer":
+      if (isOrg || myRole !== "viewer") break;
+      var selC = $("f-req-court");
+      if (selC) sendRequestScorer(selC.value);
       break;
     // (walang "home-new" case, ang nav na ang nagbubukas ng home gamit ang __pbHome)
     case "retry":
@@ -1595,7 +1657,7 @@ window.__pbSet = function (what, val) {
 window.__pbDevices = function () {
   if (!isOrg) return [];
   return devList.map(function (x) {
-    return { handle: x.handle, name: x.name, online: x.online, court: x.court, mine: !!devHandle && x.handle === devHandle };
+    return { handle: x.handle, name: x.name, online: x.online, court: x.court, pending: x.pending, want: x.want, mine: !!devHandle && x.handle === devHandle };
   });
 };
 // Para sa Devices sa navigation: pumili o mag-alis ng scorer. Organizer lang. Whitelist ang handle at court; ang server ang may huling pasya.
@@ -1613,6 +1675,22 @@ window.__pbAssign = async function (handle, court) {
     if (!r.ok) toast("Could not change the scorer. Please try again.");
   } catch (e) {
     toast("Could not change the scorer. Please try again.");
+  }
+  pullPresence();
+};
+// Para sa Devices sa navigation: tanggihan ang request ng isang device. Organizer lang. Whitelist ang handle.
+window.__pbDecline = async function (handle) {
+  if (!isOrg || !sid || !key) return;
+  if (typeof handle !== "string" || !/^[A-Za-z0-9]{3,12}$/.test(handle)) return;
+  try {
+    var r = await fetch(API + "/api/sessions/" + sid + "/requests/decline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
+      body: JSON.stringify({ handle: handle })
+    });
+    if (!r.ok) toast("Could not decline the request. Please try again.");
+  } catch (e) {
+    toast("Could not decline the request. Please try again.");
   }
   pullPresence();
 };
@@ -1993,6 +2071,34 @@ function paintDevices() {
     li.style.flexWrap = "wrap";
     li.appendChild(el("span", "", devName(it) + (it.mine ? " (this device)" : "")));
     li.appendChild(el("span", "muted", it.online ? "\u25CF Online" : "\u25CB Offline"));
+    // Pending na request na maging scorer: ipakita ang hiniling na court at ang Approve/Decline. Ang Worker pa rin ang may huling pasya.
+    if (it.pending && it.want) {
+      var reqLine = el("div", "muted");
+      reqLine.style.width = "100%";
+      reqLine.textContent = "Wants Court " + it.want;
+      li.appendChild(reqLine);
+      var wantHandle = it.handle, wantCourt = it.want;
+      var appBtn = el("button", "btn sec sm", "Approve");
+      appBtn.type = "button";
+      appBtn.addEventListener("click", function (e) {
+        if (!e.isTrusted) return; // click na gawa ng script, balewalain
+        var stNow = settingsNow();
+        if (!stNow || !stNow.org) return;
+        devSig = ""; // para ma-redraw mula sa totoong data pagkatapos
+        if (typeof window.__pbAssign === "function") window.__pbAssign(wantHandle, wantCourt);
+      });
+      var decBtn = el("button", "btn sec sm", "Decline");
+      decBtn.type = "button";
+      decBtn.addEventListener("click", function (e) {
+        if (!e.isTrusted) return; // click na gawa ng script, balewalain
+        var stNow = settingsNow();
+        if (!stNow || !stNow.org) return;
+        devSig = "";
+        if (typeof window.__pbDecline === "function") window.__pbDecline(wantHandle);
+      });
+      li.appendChild(appBtn);
+      li.appendChild(decBtn);
+    }
     // Wala nang dropdown sa sariling device ng organizer. Mayroon lang kung may Multi-court o may scorer role na.
     if (!it.mine && (courts >= 2 || it.court)) {
       var sel = document.createElement("select");
