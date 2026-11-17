@@ -526,7 +526,7 @@ async function loadSession() {
     render();
     registerDevice().then(function () {
       startLive(); // kumuha muna ng device identity, tapos saka kumonekta sa socket (viewer at organizer)
-      if (isOrg) startPresence(); // organizer lang ang kumukuha ng listahan ng devices
+      if (isOrg) startPresence(); else pullMe(); // organizer: listahan ng devices; viewer: alamin kung scorer ba siya
     });
   } catch (e) {
     loadError = "Could not connect. Please try again in a moment.";
@@ -577,6 +577,28 @@ async function registerDevice() {
   } catch (e) {}
 }
 
+/* ---------- role ng device na ito (scorer o viewer) ---------- */
+var myRole = "viewer", myCourt = 0;
+async function pullMe() {
+  if (isOrg || !sid) return;
+  var t = devToken();
+  if (!t) return;
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/me", {
+      cache: "no-store",
+      headers: { "X-Device-Token": t }
+    });
+    if (!r.ok) return;
+    var j = await r.json();
+    if (sid !== mySid || !j) return;
+    var c = Number(j.court);
+    var role = "viewer", court = 0;
+    if (j.role === "scorer" && Number.isInteger(c) && c >= 2 && c <= MAX_COURTS) { role = "scorer"; court = c; }
+    if (role !== myRole || court !== myCourt) { myRole = role; myCourt = court; render(); }
+  } catch (e) {}
+}
+
 /* ---------- presence (organizer lang) ---------- */
 var devList = [], presTimer = null, presBusy = false;
 async function pullPresence() {
@@ -601,7 +623,8 @@ async function pullPresence() {
       return {
         handle: x.handle,
         name: typeof x.name === "string" ? x.name.replace(/[<>\u0000-\u001f]/g, "").slice(0, 40) : "",
-        online: x.online === true
+        online: x.online === true,
+        court: Number.isInteger(x.court) && x.court >= 2 && x.court <= MAX_COURTS ? x.court : 0
       };
     });
     if (typeof window.__pbRefreshDevices === "function") window.__pbRefreshDevices();
@@ -623,6 +646,7 @@ function wsUrl() { return API.replace(/^http/, "ws") + "/api/sessions/" + sid + 
 function stopLive() {
   clearInterval(presTimer);
   devList = [];
+  myRole = "viewer"; myCourt = 0;
   clearInterval(pollTimer);
   clearInterval(wsPing);
   clearTimeout(wsTimer);
@@ -658,6 +682,7 @@ function startLive() {
       try {
         var m = JSON.parse(e.data);
         if (m && m.t === "changed" && m.v !== version) pollOnce();
+        else if (m && m.t === "role") pullMe(); // nagbago ang role ng device na ito
       } catch (x) {}
     };
     ws.onclose = function (ev) {
@@ -978,6 +1003,7 @@ function renderSession() {
     h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Saved") + "</p>";
   } else {
     h += '<p class="muted">View only. Only the organizer can edit. Updates automatically, no need to reload • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
+    if (myRole === "scorer") h += '<div class="banner">🎯 You are the scorer for Court ' + num(myCourt) + ". Scoring controls are coming in the next update.</div>";
   }
   if (isOrg) {
     h += '<div class="card"><h2>Share the scoreboard</h2>' +
@@ -1347,8 +1373,26 @@ window.__pbSet = function (what, val) {
 window.__pbDevices = function () {
   if (!isOrg) return [];
   return devList.map(function (x) {
-    return { handle: x.handle, name: x.name, online: x.online, mine: !!devHandle && x.handle === devHandle };
+    return { handle: x.handle, name: x.name, online: x.online, court: x.court, mine: !!devHandle && x.handle === devHandle };
   });
+};
+// Para sa Devices sa navigation: pumili o mag-alis ng scorer. Organizer lang. Whitelist ang handle at court; ang server ang may huling pasya.
+window.__pbAssign = async function (handle, court) {
+  if (!isOrg || !sid || !key) return;
+  court = Number(court);
+  if (typeof handle !== "string" || !/^[A-Za-z0-9]{3,12}$/.test(handle)) return;
+  if (!(court === 0 || (Number.isInteger(court) && court >= 2 && court <= MAX_COURTS))) return;
+  try {
+    var r = await fetch(API + "/api/sessions/" + sid + "/scorers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
+      body: JSON.stringify({ handle: handle, court: court })
+    });
+    if (!r.ok) toast("Could not change the scorer. Please try again.");
+  } catch (e) {
+    toast("Could not change the scorer. Please try again.");
+  }
+  pullPresence();
 };
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
@@ -1650,17 +1694,53 @@ var devListEl = el("ul", "cu-list");
 orgBox.appendChild(el("div", "nav-title set-gap", "Devices"));
 orgBox.appendChild(devHelp);
 orgBox.appendChild(devListEl);
+var devSig = "";
+function devName(it) { return it.name ? String(it.name) : "Device " + String(it.handle); }
 function paintDevices() {
   var list = [];
   try { list = typeof window.__pbDevices === "function" ? window.__pbDevices() : []; } catch (e) {}
   if (!Array.isArray(list)) list = [];
-  devHelp.textContent = list.length ? "Devices that opened this session. View only for now." : "No devices yet.";
+  var st = settingsNow();
+  var courts = st && st.courts >= 2 ? st.courts : 1;
+  // Huwag i-redraw kung walang nagbago, para hindi magsara ang dropdown habang namimili si organizer.
+  var sig = courts + "|" + JSON.stringify(list);
+  if (sig === devSig) return;
+  devSig = sig;
+  devHelp.textContent = !list.length ? "No devices yet."
+    : courts < 2 ? "Turn on Multi-court to choose a scorer for Court 2 and up."
+    : "Choose a device to score Court 2 and up. Court 1 is yours.";
   while (devListEl.firstChild) devListEl.removeChild(devListEl.firstChild);
+  var taken = Object.create(null);
+  list.forEach(function (it) { if (it.court) taken[it.court] = it; });
   list.forEach(function (it) {
     var li = el("li", "");
-    var nm = (it.name ? String(it.name) : "Device " + String(it.handle)) + (it.mine ? " (this device)" : "");
-    li.appendChild(el("span", "", nm));
+    li.style.flexWrap = "wrap";
+    li.appendChild(el("span", "", devName(it) + (it.mine ? " (this device)" : "")));
     li.appendChild(el("span", "muted", it.online ? "\u25CF Online" : "\u25CB Offline"));
+    // Wala nang dropdown sa sariling device ng organizer. Mayroon lang kung may Multi-court o may scorer role na.
+    if (!it.mine && (courts >= 2 || it.court)) {
+      var sel = document.createElement("select");
+      sel.style.width = "100%";
+      var o0 = document.createElement("option");
+      o0.value = "0";
+      o0.textContent = "Viewer";
+      sel.appendChild(o0);
+      for (var c = 2; c <= Math.max(courts, it.court || 0); c++) {
+        var o = document.createElement("option");
+        o.value = String(c);
+        o.textContent = "Court " + c + " scorer" + (taken[c] && taken[c] !== it ? " (replaces " + devName(taken[c]) + ")" : "");
+        sel.appendChild(o);
+      }
+      sel.value = String(it.court || 0);
+      sel.addEventListener("change", function (e) {
+        if (!e.isTrusted) return; // click na gawa ng script, balewalain
+        var stNow = settingsNow();
+        if (!stNow || !stNow.org) return;
+        devSig = ""; // para ma-redraw mula sa totoong data pagkatapos
+        if (typeof window.__pbAssign === "function") window.__pbAssign(it.handle, sel.value);
+      });
+      li.appendChild(sel);
+    }
     devListEl.appendChild(li);
   });
 }
