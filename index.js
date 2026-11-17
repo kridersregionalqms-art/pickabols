@@ -86,9 +86,11 @@ function cleanCourtMatches(arr) {
     if (!sv || (sn !== 1 && sn !== 2) || !sameSet(pA, A) || !sameSet(pB, B)) return;
     if (typeof x.m.serverId !== "string" || (sv === "A" ? pA : pB).indexOf(x.m.serverId) < 0) return;
     seen[ct] = 1;
+    var track = x.m.track === true, pts = {};
+    if (track && x.m.pts && typeof x.m.pts === "object") Object.keys(x.m.pts).forEach(function (k) { var n = cnt(x.m.pts[k]); if (n !== null) pts[k] = n; });
     out.push({ ct: ct, id: x.id, v: v, sv: x.sv === true, m: {
       dbl: dbl, teamA: A, teamB: B, posA: pA, posB: pB, scoreA: sa, scoreB: sb, target: tg, done: x.m.done === true,
-      server: sv, serverNum: sn, serverId: x.m.serverId, u: u === null ? 0 : u
+      server: sv, serverNum: sn, serverId: x.m.serverId, u: u === null ? 0 : u, track: track, pts: pts
     } });
   });
   return out;
@@ -1050,7 +1052,7 @@ function courtHtml(d, c) {
   ensurePos(c);
   var sv = c.serverId, rc = receiverId(d, c);
   // Analytics mode: ang organizer ay nagta-tap sa player na nanalo ng rally.
-  var tap = isOrg && !!c.track && !c.done;
+  var tap = (isOrg || myRole === "scorer") && !!c.track && !c.done;
   function cell(id, side) {
     var role = id === sv ? "srv" : id === rc ? "rcv" : "";
     var tag = role === "srv" ? "Server" : role === "rcv" ? "Receiver" : "";
@@ -1259,8 +1261,8 @@ function pendingHtml(d) {
 // Ang match ng Court 2+ ay ginagawang hugis ng "current" para magamit ang parehong board ng viewer. Display lang; wala itong data na sine-save.
 function courtAsCurrent(m) {
   return {
-    teamA: m.teamA, teamB: m.teamB, posA: m.posA, posB: m.posB, scoreA: m.scoreA, scoreB: m.scoreB,
-    server: m.server, serverNum: m.serverNum, serverId: m.serverId, target: m.target, done: m.done, track: false, stack: []
+    teamA: m.teamA, teamB: m.teamB, posA: m.posA, posB: m.posB, scoreA: m.scoreA, scoreB: m.scoreB, track: m.track === true, pts: m.pts || {},
+    server: m.server, serverNum: m.serverNum, serverId: m.serverId, target: m.target, done: m.done, stack: []
   };
 }
 // Screen ng scorer: court niya lang at score lang. Walang settings, analytics, players, catch-up o ibang court.
@@ -1277,9 +1279,11 @@ function scorerHtml(d) {
   var offRally = (courtBusy || m.done) ? " disabled" : "";
   var offUndo = (courtBusy || !m.u || cm.sv === true) ? " disabled" : ""; // hindi na mababawi kapag naitala na (ganito rin ang Worker)
   h += '<div class="card"><h2>Court ' + num(myCourt) + " • Current game</h2>" + boardHtml(d, courtAsCurrent(m)) +
-    '<div class="row" style="margin-top:14px">' +
-    '<button class="btn a grow" data-act="court-rally" data-team="A"' + offRally + ">Team A won the rally</button>" +
-    '<button class="btn b grow" data-act="court-rally" data-team="B"' + offRally + ">Team B won the rally</button></div>" +
+    (m.track
+      ? '<p class="muted center" style="margin-top:12px">Tap the player who won the rally, then choose how.</p>'
+      : '<div class="row" style="margin-top:14px"><button class="btn a grow" data-act="court-rally" data-team="A"' + offRally + ">Team A won the rally</button>" +
+        '<button class="btn b grow" data-act="court-rally" data-team="B"' + offRally + ">Team B won the rally</button></div>") +
+    (m.track && pickPid && m.teamA.concat(m.teamB).indexOf(pickPid) >= 0 ? pickerHtml(d) : "") +
     (m.done && cm.sv !== true
       ? '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="court-save"' + (courtBusy ? " disabled" : "") + ">✅ Save result</button></div>"
       : "") +
@@ -1462,10 +1466,10 @@ function shareView(url) {
 }
 var courtBusy = false;
 // Scorer lang. Ang device ay nagpapadala lang ng nanalo (A o B) o undo; ang Worker ang nagkukuwenta at may huling pasya (role, match ID, version).
-async function sendCourtScore(act, team) {
+async function sendCourtScore(act, team, pid, src) {
   if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
   if (act !== "rally" && act !== "undo") return;
-  if (act === "rally" && team !== "A" && team !== "B") return;
+  if (act === "rally" && team !== "A" && team !== "B" && (!pid || !src)) return;
   var court = myCourt;
   if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
   var cm = null;
@@ -1476,7 +1480,10 @@ async function sendCourtScore(act, team) {
   render();
   var mySid = sid;
   var body = { match: cm.id, v: cm.v, act: act };
-  if (act === "rally") body.team = team;
+   if (act === "rally") {
+     if (cm.m.track) { body.pid = pid; body.src = src; }
+     else body.team = team;
+   }
   try {
     var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/score", {
       method: "POST",
@@ -1877,7 +1884,10 @@ function handle(act, ds) {
     case "pick":
       var skey = srcKey(ds.src), pp = pickPid;
       pickPid = null;
-      if (skey && pp) mutate(function (d) { rallyBy(d, pp, skey); }); else render();
+      if (skey && pp) {
+        if (!isOrg && myRole === "scorer") sendCourtScore("rally", null, pp, skey);
+        else mutate(function (d) { rallyBy(d, pp, skey); });
+      } else render();
       break;
     case "pick-cancel": pickPid = null; render(); break;
     case "analytics": mutate(function (d) { if (!d.current) d.analytics = !d.analytics; }); break;
