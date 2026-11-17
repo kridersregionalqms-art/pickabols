@@ -1041,6 +1041,8 @@ function scorerHtml(d) {
     '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
     (m.done ? '<p class="muted center">This game is finished. The next game will appear here when it is ready.</p>' : "") + "</div>";
   h += '<div class="card"><h2>Next players for this court</h2><p class="muted">Not available yet. They will be chosen by the system after each game.</p></div>';
+  h += '<div class="card"><button class="btn sec sm" data-act="court-leave">✕ Cancel as scorer for this court</button>' +
+    '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
   return h + live;
 }
 function renderSession() {
@@ -1234,6 +1236,31 @@ async function sendCourtScore(act, team) {
   courtBusy = false;
   if (sid === mySid) render();
 }
+// Scorer lang. Kusang pagbitiw bilang scorer ng court na ito. Ang server mismo ang kumukuha ng sariling handle gamit ang token.
+async function sendLeaveScorer() {
+  if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
+  var t = devToken();
+  if (!t) return;
+  courtBusy = true;
+  render();
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/scorers/leave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: "{}"
+    });
+    if (!r.ok) {
+      if (r.status === 429) toast("Too many requests. Please wait a moment.");
+      else toast("Could not cancel. Please try again.");
+    }
+  } catch (e) {
+    toast("Could not cancel. Please try again.");
+  }
+  if (sid === mySid) await pullMe(); // kukunin ang bagong role (dapat viewer na)
+  courtBusy = false;
+  if (sid === mySid) render();
+}
 function handle(act, ds) {
   var base = location.origin + location.pathname;
   switch (act) {
@@ -1245,6 +1272,10 @@ function handle(act, ds) {
     case "reload": loadSession(); break;
     case "court-rally": sendCourtScore("rally", ds.team); break;
     case "court-undo": sendCourtScore("undo", null); break;
+    case "court-leave":
+      if (isOrg || myRole !== "scorer") break;
+      if (window.confirm("Stop being the scorer for this court?")) sendLeaveScorer();
+      break;
     // (walang "home-new" case, ang nav na ang nagbubukas ng home gamit ang __pbHome)
     case "retry":
       if (saving) break;
