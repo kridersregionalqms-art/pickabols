@@ -8,6 +8,15 @@ if (window.top !== window.self) {
 
 var API = "https://pickabols-api.pickabolers.workers.dev";
 var $app = document.getElementById("app");
+// Kinukuha mula sa ?v= ng script tag na nag-load nito, para iisang number na lang ang babaguhin bawat deploy
+// (sa index.html), hindi na kailangan ng hiwalay na constant dito.
+var APP_VERSION = (function () {
+  try {
+    var el = document.currentScript || document.querySelector('script[src^="index.js"]');
+    var m = el && el.src && el.src.match(/[?&]v=(\d+)/);
+    return m ? parseInt(m[1], 10) : 0;
+  } catch (e) { return 0; }
+})();
 var sid = null, key = null, data = null, version = 0, isOrg = false;
 var pollTimer = null, loadError = null, lastSync = "", statusText = "";
 var saving = false, dirty = false, conflict = false; // conflict = may ibang device na nakapag-save na ng session
@@ -1381,7 +1390,7 @@ document.addEventListener("change", function (e) {
     mutate(function (d) { d.target = v; });
   }
 });
-document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); } });
+document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); checkVersion(); } });
 
 /* ---------- bantay sa paulit-ulit na reload (viewer lang) ---------- */
 // Hanggang 3 reloads kada 60 segundo, para sa viewer at organizer. Sumobra? May countdown muna.
@@ -1423,6 +1432,70 @@ function toast(text) {
   el.style.display = "block";
   clearTimeout(toast.t);
   toast.t = setTimeout(function () { el.style.display = "none"; }, 3500);
+}
+
+/* ---------- soft update notification ---------- */
+// Hiwalay ito sa session data: static file lang ang kinukuha (version.json), hindi dumadaan sa Worker/D1.
+var updDismissedV = 0; // huling version na dini-dismiss ng user (habang bukas ang tab lang; nare-reset sa reload)
+function ensureUpdateBanner() {
+  var el = document.getElementById("update-banner");
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = "update-banner";
+  el.className = "update-banner";
+  var msg = document.createElement("span");
+  msg.textContent = "A new version of this app is available.";
+  var refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "ub-refresh";
+  refresh.textContent = "Refresh now";
+  refresh.addEventListener("click", function (e) {
+    if (!e.isTrusted) return;
+    location.reload();
+  });
+  var dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "ub-dismiss";
+  dismiss.textContent = "Later";
+  dismiss.addEventListener("click", function (e) {
+    if (!e.isTrusted) return;
+    updDismissedV = updSeenV;
+    el.classList.remove("show");
+  });
+  el.appendChild(msg);
+  el.appendChild(refresh);
+  el.appendChild(dismiss);
+  document.body.appendChild(el);
+  return el;
+}
+function ensureVerBadge() {
+  var el = document.getElementById("ver-badge");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "ver-badge";
+    el.className = "ver-badge";
+    document.body.appendChild(el);
+  }
+  el.textContent = "v" + (APP_VERSION || "?");
+  return el;
+}
+var updSeenV = 0;
+async function checkVersion() {
+  try {
+    var ctl = new AbortController();
+    var tmo = setTimeout(function () { ctl.abort(); }, 8000);
+    var r = await fetch("version.json?_=" + Date.now(), { cache: "no-store", signal: ctl.signal });
+    clearTimeout(tmo);
+    if (!r.ok) return;
+    var j = await r.json();
+    var v = Number(j && j.v);
+    // Whitelist: buong bilang lang, at may matinong saklaw (hindi basta tatanggapin ang kakaibang laki ng numero).
+    if (!Number.isInteger(v) || v < 1 || v > 999999) return;
+    updSeenV = v;
+    if (v > APP_VERSION && v !== updDismissedV) {
+      ensureUpdateBanner().classList.add("show");
+    }
+  } catch (e) {}
 }
 // Walang pagharang sa F5 / Ctrl+R. Ang limit ay hahawakan ng reloadGuard (3 reloads kada 60 segundo).
 
@@ -1562,6 +1635,9 @@ window.__pbTestMatch = async function (court) {
 };
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
+ensureVerBadge();
+checkVersion();
+setInterval(checkVersion, 60000);
 route();
 })();
 

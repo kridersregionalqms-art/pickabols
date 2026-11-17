@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://pickabols-api.pickabolers.workers.dev wss://pickabols-api.pickabolers.workers.dev; base-uri 'none'; form-action 'none'">
 <title>Pickleball Open Play</title>
 <link rel="icon" type="image/png" href="logo.png">
 <meta property="og:title" content="Pickleball Open Play">
@@ -185,6 +185,12 @@ body.nav-open .nav-side{transform:none;visibility:visible}
   .btn{padding:9px 12px;font-size:.92rem}
   .btn.sm{padding:5px 8px;font-size:.78rem}
 }
+.update-banner{display:none;position:fixed;left:50%;bottom:0;transform:translateX(-50%);max-width:92%;z-index:70;background:var(--a);color:#fff;border-radius:12px 12px 0 0;padding:10px 14px;box-shadow:0 -6px 20px rgba(0,0,0,.3);align-items:center;gap:10px;font-weight:700;font-size:.92rem}
+.update-banner.show{display:flex}
+.update-banner button{appearance:none;border:0;border-radius:8px;padding:6px 10px;font:inherit;font-weight:700;cursor:pointer}
+.update-banner .ub-refresh{background:#fff;color:var(--a)}
+.update-banner .ub-dismiss{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);padding:5px 9px}
+.ver-badge{position:fixed;right:6px;bottom:4px;z-index:5;font-size:.68rem;color:var(--muted);opacity:.6;pointer-events:none;background:var(--bg);padding:1px 5px;border-radius:6px}
 </style>
 </head>
 <body>
