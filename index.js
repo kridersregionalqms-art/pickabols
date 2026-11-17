@@ -249,6 +249,39 @@ function nextCourtOf(d, id) {
   return 0;
 }
 
+// Buod ng kasalukuyan at susunod na laro sa bawat court para sa viewers.
+function courtTableHtml(d) {
+  var nc = cleanCourts(d.courts);
+  if (nc < 2 || isOrg || myRole === "scorer") return "";
+  function names(t) {
+    return t && Array.isArray(t.teamA) && Array.isArray(t.teamB)
+      ? esc(teamNames(t.teamA) + " vs " + teamNames(t.teamB)) : "—";
+  }
+  function currentFor(ct) {
+    if (ct === 1) return d.current && !d.current.done ? d.current : null;
+    for (var i = 0; i < courtMatches.length; i++) {
+      var x = courtMatches[i];
+      if (x && x.ct === ct && x.m && !x.m.done) return x.m;
+    }
+    return null;
+  }
+  function nextFor(ct) {
+    if (ct === 1) return d.next || null;
+    return d.cn && d.cn[String(ct)] ? d.cn[String(ct)] : null;
+  }
+  var h = '<div class="card" id="courts-panel"><h2>Courts</h2>' +
+    '<p class="muted">See which court is playing and where the next game is ready.</p>' +
+    '<div class="court-table-wrap"><table class="court-table"><tr><th>Court</th><th>Now playing</th><th>Up next</th></tr>';
+  for (var ct = 1; ct <= nc; ct++) {
+    var cur = currentFor(ct), nxt = nextFor(ct);
+    h += '<tr><th scope="row">Court ' + ct + '</th><td>' +
+      (cur ? '<span class="tag play">Playing</span><br>' + names(cur) : '<span class="tag">Available</span>') +
+      '</td><td>' + (nxt ? '<span class="tag next">Next game is ready</span><br>' + names(nxt) :
+        '<span class="tag">Waiting for players</span>') + '</td></tr>';
+  }
+  return h + '</table></div></div>';
+}
+
 // Pinipili ang pinakakaunti ang laro, tapos ang pinakamatagal nang naghihintay.
 // Random ang tie-break at ang hatian ng teams (iniiwasan ang paulit-ulit na partner/kalaban).
 function genNext(d) {
@@ -1351,6 +1384,7 @@ function renderSession() {
     }
     h += '<p class="muted">View only. Only the organizer can edit. Updates automatically, no need to reload • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
     h += viewerRequestHtml(d);
+    h += courtTableHtml(d);
   }
   if (isOrg) {
     h += '<div class="card"><h2>Share the scoreboard</h2>' +
@@ -2459,6 +2493,25 @@ mcSub.appendChild(mcLabel);
 mcSub.appendChild(mcSel);
 nav.appendChild(mcSub);
 
+// Courts tab para sa viewers: lumalabas lang kapag aktibo ang multi-court.
+var courtNavBtn = el("button", "btn sec nav-theme");
+courtNavBtn.type = "button";
+courtNavBtn.id = "court-nav-btn";
+courtNavBtn.hidden = true;
+courtNavBtn.appendChild(el("span", "nav-icon", "\uD83C\DFDF\uFE0F"));
+courtNavBtn.appendChild(el("span", "nav-label", "Courts"));
+nav.appendChild(courtNavBtn);
+function refreshCourtNav() {
+  var st = settingsNow();
+  var show = !!(st && !st.org && myRole !== "scorer" && st.courts >= 2);
+  courtNavBtn.hidden = !show;
+}
+courtNavBtn.addEventListener("click", function () {
+  var panel = document.getElementById("courts-panel");
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!(wide && wide.matches)) setNav(false, false);
+});
+
 function refreshMulti() {
   var st = settingsNow();
   var show = !!(st && st.org);
@@ -2687,6 +2740,7 @@ function settingsNow() {
 // Organizer lang ang nakakakita ng Settings (Analytics at Top N). Ang viewer ay walang Settings, Dark mode lang sa footer.
 function refreshSettings() {
   refreshMulti();
+  refreshCourtNav();
   var st = settingsNow();
   var show = !!(st && st.org);
   orgBox.hidden = !show;
