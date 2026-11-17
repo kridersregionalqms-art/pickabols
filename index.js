@@ -517,8 +517,7 @@ async function loadSession() {
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
     render();
-    registerDevice(); // kukuha ng device identity sa background; kung pumalya, tuloy pa rin ang app
-    if (!isOrg) startLive();
+    registerDevice().then(function () { startLive(); }); // kumuha muna ng device identity, tapos saka kumonekta sa socket (viewer at organizer)
   } catch (e) {
     loadError = "Could not connect. Please try again in a moment.";
     render();
@@ -579,7 +578,7 @@ function stopLive() {
   if (ws) { ws.onclose = null; try { ws.close(); } catch (e) {} ws = null; }
 }
 function startLive() {
-  if (isOrg || !sid || !data) return;
+  if (!sid || !data) return;
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
   clearInterval(pollTimer);
   pollTimer = setInterval(pollOnce, 15000); // slow fallback only, used when the socket is not connected
@@ -593,6 +592,13 @@ function startLive() {
       wsPing = setInterval(function () {
         try { if (ws && ws.readyState === 1) ws.send("ping"); } catch (e) {}
       }, 40000);
+      // Ipakilala ang device (token ay nasa loob ng koneksyon, hindi sa URL). Kung walang identity, anonymous pa rin ang socket.
+      try {
+        if (devHandle) {
+          var tk = devToken();
+          if (tk) ws.send(JSON.stringify({ t: "hello", token: tk }));
+        }
+      } catch (e) {}
       pollOnce(); // catch up on anything missed while disconnected
     };
     ws.onmessage = function (e) {
@@ -602,10 +608,11 @@ function startLive() {
         if (m && m.t === "changed" && m.v !== version) pollOnce();
       } catch (x) {}
     };
-    ws.onclose = function () {
+    ws.onclose = function (ev) {
       clearInterval(wsPing);
       ws = null;
-      if (sid !== mySid || isOrg) return;
+      if (ev && ev.code === 1008) devHandle = null; // tinanggihan ang identity: kumonekta na lang nang anonymous sa susunod, huwag umulit ng hello
+      if (sid !== mySid) return;
       clearInterval(pollTimer);
       pollTimer = setInterval(pollOnce, 15000);
       wsRetry = Math.min(wsRetry + 1, 5);
@@ -1195,7 +1202,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null;
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
