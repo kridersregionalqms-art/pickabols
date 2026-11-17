@@ -25,6 +25,8 @@ var uiTick = null, warmupInputOpen = false;
 var holdUntil = 0, holdTimer = null, cachedMode = false;
 var pickPid = null; // ang player na na-tap at hinihintay ang source (hindi ito sine-save)
 var courtMatches = []; // mga match ng Court 2+ galing sa server (display lang; hindi sine-save sa browser)
+var courtSetup = []; // paghahanda ng laro ng Court 2+ (choose/warmup/serve/ready), galing sa server; display lang
+var csWarmOpen = false, csTick = null; // bukas ba ang input ng warm-up minutes; timer ng countdown (hindi sine-save)
 var homeView = "new"; // anong card ang ipapakita sa home: "new", "join" o "mine" (whitelist, tingnan ang __pbHome)
 var cuAsk = null, cuInfo = null; // modal ng catch-up setting: {kind:"add",names:[...]} o {kind:"back",id}; at kung aling ⓘ ang bukas (hindi ito sine-save)
 // ====== LISTAHAN NG SOURCE NG SCORE ======
@@ -91,6 +93,24 @@ function cleanCourtMatches(arr) {
   });
   return out;
 }
+// Setup ng Court 2+ galing sa server. Sinusuri ang hugis; ang hindi tama ay itinatapon, at mga field lang na kailangan ang kinokopya.
+// rem = segundo na natitira sa warm-up; ginagawang oras ng sarili nating orasan (at) para hindi umasa sa orasan ng server.
+function cleanCourtSetup(arr) {
+  if (!Array.isArray(arr)) return [];
+  var out = [], seen = {}, now = Date.now();
+  arr.slice(0, MAX_COURTS).forEach(function (x) {
+    if (!x || typeof x !== "object") return;
+    var ct = Number(x.ct), mi = Number(x.mi), rem = Number(x.rem);
+    if (!Number.isInteger(ct) || ct < 2 || ct > MAX_COURTS || seen[ct]) return;
+    if (x.ph !== "choose" && x.ph !== "warmup" && x.ph !== "serve" && x.ph !== "ready") return;
+    if (!Number.isInteger(mi) || mi < 0 || mi > 60) return;
+    if (!Number.isFinite(rem) || rem < 0 || rem > 3600) rem = 0;
+    seen[ct] = 1;
+    out.push({ ct: ct, ph: x.ph, mi: mi, at: now + Math.round(rem) * 1000, w: x.w === "A" ? "A" : x.w === "B" ? "B" : null });
+  });
+  return out;
+}
+function setupSig(a) { return JSON.stringify(a.map(function (x) { return [x.ct, x.ph, x.mi, x.w]; })); }
 function uid() { return Math.random().toString(36).slice(2, 8); }
 function $(id) { return document.getElementById(id); }
 function pairKey(a, b) { return a < b ? a + "|" + b : b + "|" + a; }
@@ -696,6 +716,7 @@ async function loadSession() {
     data = j.data;
     version = j.version;
     courtMatches = cleanCourtMatches(j.courts);
+    courtSetup = cleanCourtSetup(j.setup);
     cacheSave();
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
@@ -725,7 +746,10 @@ async function pollOnce() {
     var cm = cleanCourtMatches(j.courts);
     var cchg = JSON.stringify(cm) !== JSON.stringify(courtMatches); // nagbago ba ang matches ng ibang courts
     courtMatches = cm;
-    if ((j.version !== version || cchg) && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
+    var cs = cleanCourtSetup(j.setup);
+    var schg = setupSig(cs) !== setupSig(courtSetup); // nagbago ba ang paghahanda (warm-up, serve, ready)
+    courtSetup = cs;
+    if ((j.version !== version || cchg || schg) && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
   } catch (e) {}
 }
@@ -1237,7 +1261,7 @@ function scorerHtml(d) {
   var h = '<div class="banner">🎯 You are the scorer for Court ' + num(myCourt) + "</div>";
   var live = '<p class="muted">Updates automatically • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
   if (!cm || (d.mode === "doubles") !== cm.m.dbl) {
-    return h + '<div class="card"><h2>Court ' + num(myCourt) + '</h2><p class="muted">Waiting for a game on this court. This page updates by itself.</p></div>' + courtNextHtml(d, myCourt) + playersReadHtml(d) + live;
+    return h + courtSetupHtml(d) + playersReadHtml(d) + live;
   }
   var m = cm.m;
   var offRally = (courtBusy || m.done) ? " disabled" : "";
@@ -1253,10 +1277,11 @@ function scorerHtml(d) {
     '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
     (m.done
       ? (cm.sv === true
-        ? '<p class="muted center">Result saved. The next game will appear here when it is ready.</p>'
+        ? '<p class="muted center">Result saved. You can start the next game below.</p>'
         : '<p class="muted center">This game is finished. Tap Save result to record it.</p>')
       : "") + "</div>";
-  h += courtNextHtml(d, myCourt) + playersReadHtml(d);
+  // Kapag naitala na ang resulta, dito na magsisimula ang susunod na laro. Habang may laro o hindi pa saved, "Next game" lang ang ipinapakita.
+  h += ((m.done && cm.sv === true) ? courtSetupHtml(d) : courtNextHtml(d, myCourt)) + playersReadHtml(d);
   h += '<div class="card"><button class="btn sec sm" data-act="court-leave">✕ Cancel as scorer for this court</button>' +
     '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
   return h + live;
@@ -1512,6 +1537,158 @@ async function sendCourtSave() {
   courtBusy = false;
   if (sid === mySid) render();
 }
+// ====== START GAME NG COURT 2+ (scorer lang) ======
+function courtSetupOf(ct) {
+  var su = null;
+  courtSetup.forEach(function (x) { if (x.ct === ct) su = x; });
+  return su;
+}
+// Countdown ng warm-up. Humihinto kapag hindi na scorer o wala nang warm-up.
+function startCsTick() {
+  if (csTick) return;
+  csTick = setInterval(function () {
+    var su = courtSetupOf(myCourt);
+    if (isOrg || myRole !== "scorer" || !su || su.ph !== "warmup") { clearInterval(csTick); csTick = null; return; }
+    render();
+  }, 1000);
+}
+// Fixed na teksto lang ang lahat; ang mga pangalan ay dumadaan sa esc().
+function courtSetupHtml(d) {
+  var ct = num(myCourt), su = courtSetupOf(ct), dis = courtBusy ? " disabled" : "";
+  var n = d.cn && d.cn[String(ct)];
+  var ok = !!n && Array.isArray(n.teamA) && Array.isArray(n.teamB) &&
+    n.teamA.concat(n.teamB).every(function (id) { return d.players.some(function (p) { return p.id === id; }); });
+  var cancel = '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="cs-cancel"' + dis + ">Cancel</button></div>";
+  var h = '<div class="card"><h2>' + (su ? "Starting next game" : "Next game for Court " + ct) + "</h2>";
+  if (!ok) {
+    h += '<p class="muted">Not ready yet. Waiting for enough free players.</p>';
+    return h + (su ? cancel : "") + "</div>";
+  }
+  var nmA = esc(teamNames(n.teamA)), nmB = esc(teamNames(n.teamB));
+  h += "<p><strong>" + nmA + '</strong> <span class="muted">vs</span> <strong>' + nmB + "</strong></p>";
+  if (!su) {
+    h += '<div class="row"><button class="btn grow" data-act="cs-open"' + dis + ">▶ Start game</button></div>";
+  } else if (su.ph === "choose") {
+    if (csWarmOpen) {
+      h += '<label>Warm-up minutes</label><input type="text" id="f-cs-min" inputmode="numeric" value="5" style="max-width:120px">' +
+        '<div class="row" style="margin-top:8px"><button class="btn grow" data-act="cs-warm-start"' + dis + '>Start warm-up</button>' +
+        '<button class="btn sec" data-act="cs-warm-back">Back</button></div>';
+    } else {
+      h += '<p class="muted">How should this game start?</p>' +
+        '<div class="row"><button class="btn grow" data-act="cs-serve"' + dis + '>🪙 Play for serve now</button>' +
+        '<button class="btn sec grow" data-act="cs-warm-ask"' + dis + '>⏱ Warm up first</button></div>' + cancel;
+    }
+  } else if (su.ph === "warmup") {
+    startCsTick();
+    var remain = Math.max(0, Math.round((su.at - Date.now()) / 1000));
+    var mm = Math.floor(remain / 60), ss = remain % 60;
+    h += '<div class="warmupbox"><div class="wlabel">⏱ WARM UP</div><div class="wtime">' + mm + ":" + (ss < 10 ? "0" : "") + ss + "</div></div>";
+    if (remain > 0) {
+      h += '<div class="row" style="margin-top:8px"><button class="btn sec" data-act="cs-warm-stop"' + dis + ">✕ Cancel warm-up</button></div>";
+    } else {
+      h += '<p class="muted center">Time\'s up!</p>' +
+        '<div class="row" style="margin-top:8px"><button class="btn grow" data-act="cs-serve"' + dis + ">🪙 Play for serve now</button></div>";
+    }
+  } else if (su.ph === "serve") {
+    h += '<p class="muted">Play one rally to decide who serves first.</p>' +
+      '<div class="row" style="margin-top:8px">' +
+      '<button class="btn a grow" data-act="cs-rally" data-team="A"' + dis + ">Team A won the rally</button>" +
+      '<button class="btn b grow" data-act="cs-rally" data-team="B"' + dis + ">Team B won the rally</button></div>" + cancel;
+  } else if (su.ph === "ready") {
+    h += '<div class="banner">🏓 ' + (su.w === "A" ? nmA : nmB) + " won the rally and will serve first!</div>" +
+      '<div class="row"><button class="btn grow" data-act="cs-begin"' + dis + ">▶ Begin game</button>" +
+      '<button class="btn sec" data-act="cs-redo"' + dis + ">↩ Redo rally</button></div>" + cancel;
+  }
+  return h + "</div>";
+}
+// Fixed na teksto lang ang ipinapakita; hindi inilalabas ang galing sa server.
+function csToast(status, er) {
+  if (status === 403) { toast("You are no longer the scorer for this court."); pullMe(); }
+  else if (status === 429) toast("Too many taps. Please wait a moment.");
+  else if (er === "Save the result first") toast("Save the result of the last game first.");
+  else if (er === "Players busy") toast("Some players are still on another court.");
+  else if (er === "Not ready") toast("The next game is not ready yet.");
+  else if (er === "Game in progress") toast("The current game is not finished yet.");
+  else if (status === 409) toast("That step is no longer available. Showing the latest.");
+  else toast("Could not do that. Please try again.");
+}
+var CS_ACTS = ["open", "warmup", "warmstop", "serve", "rally", "redo", "cancel"]; // whitelist; dapat pareho sa Worker
+// Scorer lang. Ipinapadala lang ang hakbang; ang Worker ang nagpapasya kung puwede (role, court, phase, reserved players).
+async function sendCourtSetup(act, team, minutes) {
+  if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
+  if (CS_ACTS.indexOf(act) < 0) return;
+  if (act === "rally" && team !== "A" && team !== "B") return;
+  var court = myCourt;
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
+  var t = devToken();
+  if (!t) return;
+  var body = { act: act };
+  if (act === "rally") body.team = team;
+  if (act === "warmup") {
+    var mi = Math.floor(Number(minutes));
+    body.minutes = mi >= 1 && mi <= 60 ? mi : 5;
+  }
+  courtBusy = true;
+  csWarmOpen = false;
+  render();
+  var mySid = sid;
+  var ctl = new AbortController();
+  var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: JSON.stringify(body),
+      signal: ctl.signal
+    });
+    if (!r.ok) {
+      var j = null;
+      try { j = await r.json(); } catch (e2) {}
+      csToast(r.status, j && typeof j.error === "string" ? j.error : "");
+    }
+  } catch (e) {
+    toast("Could not do that. Please try again.");
+  } finally {
+    clearTimeout(tmo);
+  }
+  if (sid === mySid) await pollOnce();
+  courtBusy = false;
+  if (sid === mySid) render();
+}
+// Scorer lang. Begin game: ang Worker ang gagawa ng bagong match mula sa naka-reserve na laro ng court na ito.
+async function sendCourtStart() {
+  if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
+  var court = myCourt;
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
+  var su = courtSetupOf(court);
+  var t = devToken();
+  if (!t || !su || su.ph !== "ready") return;
+  courtBusy = true;
+  render();
+  var mySid = sid;
+  var ctl = new AbortController();
+  var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: "{}",
+      signal: ctl.signal
+    });
+    if (!r.ok) {
+      var j = null;
+      try { j = await r.json(); } catch (e2) {}
+      csToast(r.status, j && typeof j.error === "string" ? j.error : "");
+    }
+  } catch (e) {
+    toast("Could not start the game. Please try again.");
+  } finally {
+    clearTimeout(tmo);
+  }
+  if (sid === mySid) await pollOnce();
+  courtBusy = false;
+  if (sid === mySid) render();
+}
 // Scorer lang. Kusang pagbitiw bilang scorer ng court na ito. Ang server mismo ang kumukuha ng sariling handle gamit ang token.
 async function sendLeaveScorer() {
   if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
@@ -1581,6 +1758,19 @@ function handle(act, ds) {
     case "court-rally": sendCourtScore("rally", ds.team); break;
     case "court-undo": sendCourtScore("undo", null); break;
     case "court-save": sendCourtSave(); break;
+    case "cs-open": sendCourtSetup("open"); break;
+    case "cs-serve": sendCourtSetup("serve"); break;
+    case "cs-warm-ask": if (!isOrg && myRole === "scorer") { csWarmOpen = true; render(); } break;
+    case "cs-warm-back": csWarmOpen = false; render(); break;
+    case "cs-warm-start":
+      var csMin = Math.floor(num(($("f-cs-min") || {}).value)) || 5;
+      sendCourtSetup("warmup", null, csMin);
+      break;
+    case "cs-warm-stop": sendCourtSetup("warmstop"); break;
+    case "cs-rally": sendCourtSetup("rally", ds.team); break;
+    case "cs-redo": sendCourtSetup("redo"); break;
+    case "cs-cancel": sendCourtSetup("cancel"); break;
+    case "cs-begin": sendCourtStart(); break;
     case "court-leave":
       if (isOrg || myRole !== "scorer") break;
       if (window.confirm("Stop being the scorer for this court?")) sendLeaveScorer();
@@ -1813,7 +2003,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = []; courtBusy = false; unsaved = [];
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = []; courtSetup = []; csWarmOpen = false; if (csTick) { clearInterval(csTick); csTick = null; } courtBusy = false; unsaved = [];
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
@@ -1937,23 +2127,7 @@ window.__pbDecline = async function (handle) {
   }
   pullPresence();
 };
-// PANSAMANTALA (aalisin sa Step 8). Organizer lang. Gumagawa ng test match sa isang court. Whitelist ang court; ang server ang may huling pasya.
-window.__pbTestMatch = async function (court) {
-  if (!isOrg || !sid || !key) return;
-  court = Number(court);
-  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
-  try {
-    var r = await fetch(API + "/api/sessions/" + sid + "/courts/" + court + "/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
-      body: "{}"
-    });
-    if (r.ok) toast("Test match created on Court " + court + ".");
-    else toast(r.status === 409 ? "Not enough free players for a test match." : r.status === 400 ? "That court is not available." : "Could not create the test match.");
-  } catch (e) {
-    toast("Could not create the test match.");
-  }
-};
+
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
 ensureVerBadge();
@@ -2171,39 +2345,6 @@ mcSub.appendChild(mcSw.row);
 mcSub.appendChild(mcNote);
 mcSub.appendChild(mcLabel);
 mcSub.appendChild(mcSel);
-// PANSAMANTALA (aalisin sa Step 8): gumawa ng test match sa isang court para masubukan ang scorer screen. Fixed na teksto lang.
-var tmWrap = el("div", "");
-tmWrap.hidden = true;
-tmWrap.appendChild(el("label", "", "Test match (temporary)"));
-var tmSel = document.createElement("select");
-var tmBtn = el("button", "btn sec sm", "Create test match");
-tmBtn.type = "button";
-tmBtn.style.marginTop = "8px";
-tmWrap.appendChild(tmSel);
-tmWrap.appendChild(tmBtn);
-tmWrap.appendChild(el("p", "muted", "Uses players who are not in Court 1 or another court. Games are not counted."));
-mcSub.appendChild(tmWrap);
-var tmBuilt = 0;
-function paintTest(courts) {
-  tmWrap.hidden = !(courts >= 2);
-  if (courts === tmBuilt) return;
-  tmBuilt = courts;
-  var keep = tmSel.value;
-  while (tmSel.firstChild) tmSel.removeChild(tmSel.firstChild);
-  for (var c = 2; c <= courts; c++) {
-    var o = document.createElement("option");
-    o.value = String(c);
-    o.textContent = "Court " + c;
-    tmSel.appendChild(o);
-  }
-  if (keep) tmSel.value = keep;
-}
-tmBtn.addEventListener("click", function (e) {
-  if (!e.isTrusted) return; // click na gawa ng script, balewalain
-  var stT = settingsNow();
-  if (!stT || !stT.org) return;
-  if (typeof window.__pbTestMatch === "function") window.__pbTestMatch(tmSel.value);
-});
 nav.appendChild(mcSub);
 
 function refreshMulti() {
@@ -2225,7 +2366,6 @@ function refreshMulti() {
   mcSel.hidden = !on;
   mcSel.disabled = !!st.locked;
   if (on) mcSel.value = String(st.courts);
-  paintTest(on ? st.courts : 1);
 }
 mcBtn.addEventListener("click", function (e) {
   if (!e.isTrusted) return; // click na gawa ng script, balewalain
