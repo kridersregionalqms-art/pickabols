@@ -435,6 +435,36 @@ function toggleRest(d, id, cm) {
 function inCurrent(d, id) {
   return !!d.current && d.current.teamA.concat(d.current.teamB).indexOf(id) >= 0;
 }
+// Anong court ang kinalalagyan ng player ngayon: 1 (Court 1), 2-6 (Court 2+), o 0 (wala sa court).
+// Ang Court 2+ ay galing sa courtMatches (validated na), at hindi binibilang ang tapos nang laro.
+function courtOf(d, id) {
+  if (inCurrent(d, id)) return 1;
+  for (var i = 0; i < courtMatches.length; i++) {
+    var x = courtMatches[i];
+    if (x && x.m && !x.m.done && x.m.teamA.concat(x.m.teamB).indexOf(id) >= 0) return x.ct;
+  }
+  return 0;
+}
+// Status ng player: Resting / Playing (sa alinmang court) / Up next / Waiting. Fixed na teksto lang.
+function playerStatusHtml(d, p, nextIds) {
+  return !p.active ? '<span class="tag rest">Resting</span>'
+    : courtOf(d, p.id) ? '<span class="tag play">Playing</span>'
+    : nextIds.indexOf(p.id) >= 0 ? '<span class="tag next">Up next</span>'
+    : '<span class="tag">Waiting</span>';
+}
+// Read-only na listahan ng players (Name, Games, Status, Court). Ginagamit sa scorer screen. Lahat ng pangalan ay dumadaan sa esc().
+function playersReadHtml(d) {
+  var nextIds = d.next ? [].concat(d.next.teamA, d.next.teamB) : [];
+  var multi = cleanCourts(d.courts) >= 2;
+  var h = '<div class="card"><h2>Players (' + activePlayers(d).length + ' active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>' +
+    (multi ? '<th>Court</th>' : '') + '</tr>';
+  d.players.forEach(function (p) {
+    var ct = courtOf(d, p.id);
+    h += '<tr><td>' + esc(p.name) + '</td><td>' + num(p.games) + '</td><td>' + playerStatusHtml(d, p, nextIds) + '</td>' +
+      (multi ? '<td>' + (p.active && ct ? num(ct) : '-') + '</td>' : '') + '</tr>';
+  });
+  return h + '</table></div>';
+}
 function removePlayer(d, id) {
   if (inCurrent(d, id)) return false;
   d.players = d.players.filter(function (p) { return p.id !== id; });
@@ -1046,7 +1076,7 @@ function scorerHtml(d) {
   var h = '<div class="banner">🎯 You are the scorer for Court ' + num(myCourt) + "</div>";
   var live = '<p class="muted">Updates automatically • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
   if (!cm || (d.mode === "doubles") !== cm.m.dbl) {
-    return h + '<div class="card"><h2>Court ' + num(myCourt) + '</h2><p class="muted">Waiting for a game on this court. This page updates by itself.</p></div>' + live;
+    return h + '<div class="card"><h2>Court ' + num(myCourt) + '</h2><p class="muted">Waiting for a game on this court. This page updates by itself.</p></div>' + playersReadHtml(d) + live;
   }
   var m = cm.m;
   var offRally = (courtBusy || m.done) ? " disabled" : "";
@@ -1058,7 +1088,7 @@ function scorerHtml(d) {
     '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="court-undo"' + offUndo + ">↩ Undo</button></div>" +
     '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
     (m.done ? '<p class="muted center">This game is finished. The next game will appear here when it is ready.</p>' : "") + "</div>";
-  h += '<div class="card"><h2>Next players for this court</h2><p class="muted">Not available yet. They will be chosen by the system after each game.</p></div>';
+  h += playersReadHtml(d);
   h += '<div class="card"><button class="btn sec sm" data-act="court-leave">✕ Cancel as scorer for this court</button>' +
     '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
   return h + live;
@@ -1134,13 +1164,12 @@ function renderSession() {
   if (d.pending && d.pending.phase === "warmup") startUiTick();
   h += '<div class="card"><h2>' + (d.pending ? "Starting next game" : (c ? "Next game" : "Next game is ready")) + "</h2>" + (d.pending ? pendingHtml(d) : nextHtml(d)) + "</div>";
 
-  h += '<div class="card"><h2>Players (' + activePlayers(d).length + " active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>" + (isOrg ? "<th></th>" : "") + "</tr>";
+  var multiC = cleanCourts(d.courts) >= 2; // lalabas lang ang Court column kapag Multi-court
+  h += '<div class="card"><h2>Players (' + activePlayers(d).length + " active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>" + (multiC ? "<th>Court</th>" : "") + (isOrg ? "<th></th>" : "") + "</tr>";
   d.players.forEach(function (p) {
-    var st = !p.active ? '<span class="tag rest">Resting</span>'
-      : inCurrent(d, p.id) ? '<span class="tag play">Playing</span>'
-      : nextIds.indexOf(p.id) >= 0 ? '<span class="tag next">Up next</span>'
-      : '<span class="tag">Waiting</span>';
-    h += "<tr><td>" + esc(p.name) + "</td><td>" + num(p.games) + "</td><td>" + st + "</td>";
+    var pc = courtOf(d, p.id);
+    h += "<tr><td>" + esc(p.name) + "</td><td>" + num(p.games) + "</td><td>" + playerStatusHtml(d, p, nextIds) + "</td>" +
+      (multiC ? "<td>" + (p.active && pc ? num(pc) : "-") + "</td>" : "");
     if (isOrg) {
       h += '<td style="white-space:nowrap"><button class="btn sec sm" data-act="rest" data-id="' + esc(p.id) + '">' + (p.active ? "Rest" : "Back") + "</button> " +
         '<button class="btn sec sm" data-act="remove" data-id="' + esc(p.id) + '">✕</button></td>';
