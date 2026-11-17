@@ -58,6 +58,8 @@ function cleanCourtMatches(arr) {
     return a.slice();
   }
   function cnt(x) { x = Number(x); return Number.isInteger(x) && x >= 0 && x <= 999 ? x : null; }
+  // Ang posisyon ay dapat galing sa parehong team (walang dagdag o kulang na player).
+  function sameSet(p, t) { return !!p && p.length === t.length && p.every(function (q) { return t.indexOf(q) >= 0; }); }
   arr.slice(0, MAX_COURTS).forEach(function (x) {
     if (!x || typeof x !== "object" || !x.m || typeof x.m !== "object") return;
     var ct = Number(x.ct), v = Number(x.v);
@@ -66,8 +68,17 @@ function cleanCourtMatches(arr) {
     if (!Number.isInteger(v) || v < 1) return;
     var A = ids(x.m.teamA), B = ids(x.m.teamB), sa = cnt(x.m.scoreA), sb = cnt(x.m.scoreB), tg = cnt(x.m.target);
     if (!A || !B || sa === null || sb === null || tg === null) return;
+    var dbl = x.m.dbl === true;
+    if (A.length !== (dbl ? 2 : 1) || B.length !== (dbl ? 2 : 1)) return;
+    var pA = ids(x.m.posA), pB = ids(x.m.posB), sn = Number(x.m.serverNum), u = cnt(x.m.u);
+    var sv = x.m.server === "A" ? "A" : x.m.server === "B" ? "B" : null;
+    if (!sv || (sn !== 1 && sn !== 2) || !sameSet(pA, A) || !sameSet(pB, B)) return;
+    if (typeof x.m.serverId !== "string" || (sv === "A" ? pA : pB).indexOf(x.m.serverId) < 0) return;
     seen[ct] = 1;
-    out.push({ ct: ct, id: x.id, v: v, m: { teamA: A, teamB: B, scoreA: sa, scoreB: sb, target: tg, done: x.m.done === true } });
+    out.push({ ct: ct, id: x.id, v: v, m: {
+      dbl: dbl, teamA: A, teamB: B, posA: pA, posB: pB, scoreA: sa, scoreB: sb, target: tg, done: x.m.done === true,
+      server: sv, serverNum: sn, serverId: x.m.serverId, u: u === null ? 0 : u
+    } });
   });
   return out;
 }
@@ -1002,6 +1013,36 @@ function pendingHtml(d) {
   }
   return h;
 }
+// Ang match ng Court 2+ ay ginagawang hugis ng "current" para magamit ang parehong board ng viewer. Display lang; wala itong data na sine-save.
+function courtAsCurrent(m) {
+  return {
+    teamA: m.teamA, teamB: m.teamB, posA: m.posA, posB: m.posB, scoreA: m.scoreA, scoreB: m.scoreB,
+    server: m.server, serverNum: m.serverNum, serverId: m.serverId, target: m.target, done: m.done, track: false, stack: []
+  };
+}
+// Screen ng scorer: court niya lang at score lang. Walang settings, analytics, players, catch-up o ibang court.
+// Fixed na teksto lang; ang mga pangalan ay dumadaan sa esc() sa boardHtml.
+function scorerHtml(d) {
+  var cm = null;
+  courtMatches.forEach(function (x) { if (x.ct === myCourt) cm = x; });
+  var h = '<div class="banner">🎯 You are the scorer for Court ' + num(myCourt) + "</div>";
+  var live = '<p class="muted">Updates automatically • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
+  if (!cm || (d.mode === "doubles") !== cm.m.dbl) {
+    return h + '<div class="card"><h2>Court ' + num(myCourt) + '</h2><p class="muted">Waiting for a game on this court. This page updates by itself.</p></div>' + live;
+  }
+  var m = cm.m;
+  var offRally = (courtBusy || m.done) ? " disabled" : "";
+  var offUndo = (courtBusy || !m.u) ? " disabled" : "";
+  h += '<div class="card"><h2>Court ' + num(myCourt) + " • Current game</h2>" + boardHtml(d, courtAsCurrent(m)) +
+    '<div class="row" style="margin-top:14px">' +
+    '<button class="btn a grow" data-act="court-rally" data-team="A"' + offRally + ">Team A won the rally</button>" +
+    '<button class="btn b grow" data-act="court-rally" data-team="B"' + offRally + ">Team B won the rally</button></div>" +
+    '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="court-undo"' + offUndo + ">↩ Undo</button></div>" +
+    '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
+    (m.done ? '<p class="muted center">This game is finished. The next game will appear here when it is ready.</p>' : "") + "</div>";
+  h += '<div class="card"><h2>Next players for this court</h2><p class="muted">Not available yet. They will be chosen by the system after each game.</p></div>';
+  return h + live;
+}
 function renderSession() {
   if (loadError) {
     $app.innerHTML = '<h1>🏓 Pickleball Open Play</h1><div class="card"><p class="err">' + esc(loadError) +
@@ -1031,8 +1072,12 @@ function renderSession() {
   if (isOrg) {
     h += '<p class="muted status" id="status" data-act="retry">' + esc(statusText || "✓ Saved") + "</p>";
   } else {
+    if (myRole === "scorer") {
+      // Scorer screen: court niya lang at score lang. Walang ibang bahagi ng page.
+      $app.innerHTML = h + scorerHtml(d);
+      return;
+    }
     h += '<p class="muted">View only. Only the organizer can edit. Updates automatically, no need to reload • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
-    if (myRole === "scorer") h += '<div class="banner">🎯 You are the scorer for Court ' + num(myCourt) + ". Scoring controls are coming in the next update.</div>";
   }
   if (isOrg) {
     h += '<div class="card"><h2>Share the scoreboard</h2>' +
@@ -1147,6 +1192,48 @@ function shareView(url) {
     copyText(url);
   }
 }
+var courtBusy = false;
+// Scorer lang. Ang device ay nagpapadala lang ng nanalo (A o B) o undo; ang Worker ang nagkukuwenta at may huling pasya (role, match ID, version).
+async function sendCourtScore(act, team) {
+  if (isOrg || !sid || myRole !== "scorer" || courtBusy) return;
+  if (act !== "rally" && act !== "undo") return;
+  if (act === "rally" && team !== "A" && team !== "B") return;
+  var court = myCourt;
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
+  var cm = null;
+  courtMatches.forEach(function (x) { if (x.ct === court) cm = x; });
+  var t = devToken();
+  if (!cm || !t) return;
+  courtBusy = true;
+  render();
+  var mySid = sid;
+  var body = { match: cm.id, v: cm.v, act: act };
+  if (act === "rally") body.team = team;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/score", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Device-Token": t },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) {
+      var j = null;
+      try { j = await r.json(); } catch (e2) {}
+      var er = j && typeof j.error === "string" ? j.error : "";
+      // Fixed na teksto lang ang ipinapakita; hindi inilalabas ang galing sa server.
+      if (r.status === 403) { toast("You are no longer the scorer for this court."); pullMe(); }
+      else if (r.status === 429) toast("Too many taps. Please wait a moment.");
+      else if (er === "Match finished") toast("This game is already finished.");
+      else if (er === "Nothing to undo") toast("Nothing to undo.");
+      else if (r.status === 409) toast("The score changed. Showing the latest.");
+      else toast("Could not save the score. Please try again.");
+    }
+  } catch (e) {
+    toast("Could not save the score. Please try again.");
+  }
+  if (sid === mySid) await pollOnce(); // kunin ang bagong state mula sa D1
+  courtBusy = false;
+  if (sid === mySid) render();
+}
 function handle(act, ds) {
   var base = location.origin + location.pathname;
   switch (act) {
@@ -1156,6 +1243,8 @@ function handle(act, ds) {
       if (code.length >= 4) location.hash = "#/s/" + code;
       break;
     case "reload": loadSession(); break;
+    case "court-rally": sendCourtScore("rally", ds.team); break;
+    case "court-undo": sendCourtScore("undo", null); break;
     // (walang "home-new" case, ang nav na ang nagbubukas ng home gamit ang __pbHome)
     case "retry":
       if (saving) break;
@@ -1315,7 +1404,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = [];
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = []; courtBusy = false;
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
@@ -1422,6 +1511,23 @@ window.__pbAssign = async function (handle, court) {
     toast("Could not change the scorer. Please try again.");
   }
   pullPresence();
+};
+// PANSAMANTALA (aalisin sa Step 8). Organizer lang. Gumagawa ng test match sa isang court. Whitelist ang court; ang server ang may huling pasya.
+window.__pbTestMatch = async function (court) {
+  if (!isOrg || !sid || !key) return;
+  court = Number(court);
+  if (!(Number.isInteger(court) && court >= 2 && court <= MAX_COURTS)) return;
+  try {
+    var r = await fetch(API + "/api/sessions/" + sid + "/courts/" + court + "/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
+      body: "{}"
+    });
+    if (r.ok) toast("Test match created on Court " + court + ".");
+    else toast(r.status === 409 ? "Not enough free players for a test match." : r.status === 400 ? "That court is not available." : "Could not create the test match.");
+  } catch (e) {
+    toast("Could not create the test match.");
+  }
 };
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
@@ -1637,6 +1743,39 @@ mcSub.appendChild(mcSw.row);
 mcSub.appendChild(mcNote);
 mcSub.appendChild(mcLabel);
 mcSub.appendChild(mcSel);
+// PANSAMANTALA (aalisin sa Step 8): gumawa ng test match sa isang court para masubukan ang scorer screen. Fixed na teksto lang.
+var tmWrap = el("div", "");
+tmWrap.hidden = true;
+tmWrap.appendChild(el("label", "", "Test match (temporary)"));
+var tmSel = document.createElement("select");
+var tmBtn = el("button", "btn sec sm", "Create test match");
+tmBtn.type = "button";
+tmBtn.style.marginTop = "8px";
+tmWrap.appendChild(tmSel);
+tmWrap.appendChild(tmBtn);
+tmWrap.appendChild(el("p", "muted", "Uses players who are not in Court 1 or another court. Games are not counted."));
+mcSub.appendChild(tmWrap);
+var tmBuilt = 0;
+function paintTest(courts) {
+  tmWrap.hidden = !(courts >= 2);
+  if (courts === tmBuilt) return;
+  tmBuilt = courts;
+  var keep = tmSel.value;
+  while (tmSel.firstChild) tmSel.removeChild(tmSel.firstChild);
+  for (var c = 2; c <= courts; c++) {
+    var o = document.createElement("option");
+    o.value = String(c);
+    o.textContent = "Court " + c;
+    tmSel.appendChild(o);
+  }
+  if (keep) tmSel.value = keep;
+}
+tmBtn.addEventListener("click", function (e) {
+  if (!e.isTrusted) return; // click na gawa ng script, balewalain
+  var stT = settingsNow();
+  if (!stT || !stT.org) return;
+  if (typeof window.__pbTestMatch === "function") window.__pbTestMatch(tmSel.value);
+});
 nav.appendChild(mcSub);
 
 function refreshMulti() {
@@ -1658,6 +1797,7 @@ function refreshMulti() {
   mcSel.hidden = !on;
   mcSel.disabled = !!st.locked;
   if (on) mcSel.value = String(st.courts);
+  paintTest(on ? st.courts : 1);
 }
 mcBtn.addEventListener("click", function (e) {
   if (!e.isTrusted) return; // click na gawa ng script, balewalain
