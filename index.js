@@ -181,10 +181,12 @@ function reservedIds(d, ct) {
       t.teamA.concat(t.teamB).forEach(function (x) { if (typeof x === "string") s[x] = 1; });
     }
   }
-  if (ct !== 1) { add(d.next); add(d.pending); add(d.current); }
+  var multi = cleanCourts(d.courts) >= 2; // sa multi-court, ang naglalaro (kahit saang court) ay hindi puwedeng maging "Up next"
+  if (ct !== 1) { add(d.next); add(d.pending); }
+  if (d.current && !d.current.done && (ct !== 1 || multi)) add(d.current);
   var cn = d.cn || {};
   Object.keys(cn).forEach(function (k) { if (Number(k) !== ct) add(cn[k]); });
-  courtMatches.forEach(function (x) { if (x && x.m && !x.m.done && x.ct !== ct) add(x.m); });
+  courtMatches.forEach(function (x) { if (x && x.m && !x.m.done && (multi || x.ct !== ct)) add(x.m); });
   return s;
 }
 // Valid pa ba ang naka-reserve na laro ng court ct? Hindi ito papalitan hangga't valid pa.
@@ -279,6 +281,7 @@ function startNext(d, forced) {
   ensureNext(d);
   var n = d.next;
   if (!n) return;
+  n.round = Math.max(num(n.round), num(d.round) + 1); // iwas banggaan ng round sa laro ng ibang court
   d.round = n.round;
   var first = (forced === "A" || forced === "B") ? forced : (Math.random() < 0.5 ? "A" : "B");
   d.current = {
@@ -602,15 +605,37 @@ function setStatus(t) {
   var el = $("status");
   if (el) el.textContent = t;
 }
+var unsaved = []; // mga galaw ng organizer na hindi pa nase-save (inuulit kapag may 409)
+// Kapag may ibang nag-save ng session (hal. ang Worker kapag nag-Start o Save ang scorer): kunin ang pinakabago,
+// ulitin ang mga galaw na hindi pa nase-save, at ibalik ang reservation ng mga court. Ibinabalik kung nagtagumpay.
+async function rebaseFromServer() {
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid, { cache: "no-store" });
+    if (!r.ok) return false;
+    var j = await r.json();
+    if (sid !== mySid || !j || !okData(j.data) || !Number.isInteger(j.version)) return false;
+    data = j.data;
+    version = j.version;
+    courtMatches = cleanCourtMatches(j.courts);
+    unsaved.slice().forEach(function (fn) { try { fn(data); } catch (e) {} });
+    if (cleanCourts(data.courts) >= 2) ensureCourtNexts(data);
+    cacheSave();
+    render();
+    return true;
+  } catch (e) { return false; }
+}
 async function persist() {
   if (!isOrg || !data) return;
   if (saving) { dirty = true; return; }
   saving = true;
   document.body.classList.add("saving");
   setStatus("Saving...");
+  var rebases = 0;
   try {
     do {
       dirty = false;
+      var sentOps = unsaved.length; // ilang galaw ang kasama sa kopyang ipapadala
       var ctl = new AbortController();
       var tmo = setTimeout(function () { ctl.abort(); }, 15000);
       var r;
@@ -625,10 +650,15 @@ async function persist() {
         clearTimeout(tmo);
       }
       if (r.status === 403) throw new Error("403");
-      if (r.status === 409) throw new Error("409");
+      if (r.status === 409) {
+        // May ibang nakapag-save (hal. nag-Start o Save ang scorer). Kunin ang pinakabago, ulitin ang mga galaw na hindi pa nase-save, at subukan ulit.
+        if (rebases < 3 && await rebaseFromServer()) { rebases++; dirty = true; continue; }
+        throw new Error("409");
+      }
       if (!r.ok) throw new Error(String(r.status));
       var j = await r.json();
       version = j.version;
+      unsaved.splice(0, sentOps); // naipadala na ang mga galaw na ito
       cacheSave();
     } while (dirty);
     setStatus("✓ Saved");
@@ -647,6 +677,7 @@ async function persist() {
 function mutate(fn) {
   if (!isOrg || !data) return;
   fn(data);
+  unsaved.push(fn);
   cacheSave();
   render();
   persist();
@@ -654,6 +685,7 @@ function mutate(fn) {
 async function loadSession() {
   loadError = null;
   data = null;
+  unsaved = [];
   render();
   try {
     var r = await fetch(API + "/api/sessions/" + sid, { cache: "no-store" });
@@ -720,6 +752,34 @@ async function pullCourts() {
   } catch (e) {
   } finally {
     courtsBusy = false;
+  }
+}
+
+// Organizer lang. Kapag may nagbago sa session mula sa Worker (nag-Start o Save ang scorer): kunin ang pinakabago.
+// Hindi ito gagalaw kung may sine-save o hindi pa nase-save na galaw; ang 409 handler ng persist ang bahala doon.
+var orgBusy = false;
+async function pullOrg() {
+  if (!isOrg || !sid || document.hidden || orgBusy || saving || dirty || conflict || unsaved.length) return;
+  orgBusy = true;
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid, { cache: "no-store" });
+    if (!r.ok) return;
+    var j = await r.json();
+    if (sid !== mySid || !j || !okData(j.data) || !Number.isInteger(j.version)) return;
+    if (saving || dirty || unsaved.length) return; // may bagong galaw habang naghihintay ng sagot
+    if (j.version === version) return;
+    data = j.data;
+    version = j.version;
+    courtMatches = cleanCourtMatches(j.courts);
+    var cnBefore = JSON.stringify(data.cn || null);
+    if (cleanCourts(data.courts) >= 2) ensureCourtNexts(data); // ibalik ang reservation ng court na nag-Start
+    cacheSave();
+    render();
+    if (JSON.stringify(data.cn || null) !== cnBefore) persist();
+  } catch (e) {
+  } finally {
+    orgBusy = false;
   }
 }
 
@@ -863,13 +923,13 @@ function startLive() {
         }
       } catch (e) {}
       pollOnce(); // catch up on anything missed while disconnected
-      if (isOrg) pullCourts();
+      if (isOrg) { pullCourts(); pullOrg(); }
     };
     ws.onmessage = function (e) {
       if (e.data === "pong") return;
       try {
         var m = JSON.parse(e.data);
-        if (m && m.t === "changed" && m.v !== version) pollOnce();
+        if (m && m.t === "changed" && m.v !== version) { if (isOrg) pullOrg(); else pollOnce(); }
         else if (m && m.t === "role") pullMe(); // nagbago ang role ng device na ito
         else if (m && m.t === "courts") { if (isOrg) pullCourts(); else pollOnce(); } // nagbago ang match ng Court 2+
       } catch (x) {}
@@ -1582,7 +1642,7 @@ document.addEventListener("change", function (e) {
     mutate(function (d) { d.target = v; });
   }
 });
-document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); checkVersion(); } });
+document.addEventListener("visibilitychange", function () { if (!document.hidden) { pollOnce(); startLive(); checkVersion(); pullOrg(); } });
 
 /* ---------- bantay sa paulit-ulit na reload (viewer lang) ---------- */
 // Hanggang 3 reloads kada 60 segundo, para sa viewer at organizer. Sumobra? May countdown muna.
@@ -1700,7 +1760,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = []; courtBusy = false;
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = []; courtBusy = false; unsaved = [];
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
