@@ -137,11 +137,7 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 .logo-lg{display:block;width:min(100%,300px);height:auto}
 .logo-sm{height:40px;width:auto;max-width:45%;object-fit:contain;flex:0 0 auto}
 @keyframes spin{to{transform:rotate(360deg)}}
-.saving [data-act="rally"],.saving [data-act="undo"],.saving [data-act="save"],.saving .cc.tap{pointer-events:none;position:relative}
-.saving [data-act="rally"],.saving [data-act="undo"],.saving [data-act="save"]{opacity:.75}
-.saving [data-act="rally"]::after,.saving [data-act="undo"]::after,.saving [data-act="save"]::after{content:"";position:absolute;top:50%;right:10px;width:16px;height:16px;margin-top:-8px;border:3px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
-.saving .cc.tap::after{content:"";position:absolute;top:6px;right:6px;width:14px;height:14px;border:3px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
-@media (prefers-reduced-motion:reduce){.saving [data-act]::after,.saving .cc.tap::after{animation-duration:2s}}
+/* Walang lock habang nagse-save: ang mga tap ay pumipila (tingnan ang unsaved/dirty sa persist). Ang status sa itaas ang nagsasabi kung saving. */
 .pick-modal{position:fixed;top:0;right:0;bottom:0;left:0;z-index:60;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:12px;overflow-y:auto}
 .pick{width:100%;max-width:460px;border:2px solid var(--a);border-radius:14px;padding:14px;background:var(--card);color:var(--text);box-shadow:0 12px 40px rgba(0,0,0,.5)}
 .pick-title{font-weight:800;text-align:center;margin-bottom:8px;word-break:break-word}
@@ -196,6 +192,6 @@ body.nav-open .nav-side{transform:none;visibility:visible}
 <body>
 <div id="app"><p class="muted">Loading...</p></div>
 <noscript>JavaScript is required for this page to work.</noscript>
-<script src="index.js?v=25"></script>
+<script src="index.js?v=26"></script>
 </body>
 </html>

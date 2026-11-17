@@ -1499,9 +1499,23 @@ async function sendCourtScore(act, team) {
   } catch (e) {
     toast("Could not save the score. Please try again.");
   }
-  if (sid === mySid) await pollOnce(); // kunin ang bagong state mula sa D1
+  // Kung tinanggap ng Worker, gamitin agad ang ibinalik na estado (hindi na hihintaying mag-GET).
+  // Dumadaan pa rin sa cleanCourtMatches (whitelist at pagsusuri ng hugis) bago gamitin.
+  var fresh = false;
+  try {
+    if (r && r.ok) {
+      var jj = await r.json();
+      var one = cleanCourtMatches([{ ct: court, id: cm.id, v: jj && jj.v, sv: false, m: jj && jj.m }]);
+      if (sid === mySid && myCourt === court && one.length === 1) {
+        courtMatches = courtMatches.filter(function (x) { return x.ct !== court; }).concat(one);
+        fresh = true;
+      }
+    }
+  } catch (e3) {}
+  if (!fresh && sid === mySid) await pollOnce(); // kung may problema, kunin ang totoong estado mula sa D1
   courtBusy = false;
   if (sid === mySid) render();
+  if (fresh && sid === mySid) pollOnce(); // sa background lang: tiyaking tugma sa server
 }
 // Scorer lang. Nagpapadala ng "save result" para sa natapos na laro ng court niya. Ang Worker ang may huling pasya
 // (role, court, match ID, version, tapos na ba ang laro). Ligtas ulitin: hindi nadodoble ang resulta sa history.
