@@ -15,6 +15,7 @@ var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
 var holdUntil = 0, holdTimer = null, cachedMode = false;
 var pickPid = null; // ang player na na-tap at hinihintay ang source (hindi ito sine-save)
+var courtMatches = []; // mga match ng Court 2+ galing sa server (display lang; hindi sine-save sa browser)
 var homeView = "new"; // anong card ang ipapakita sa home: "new", "join" o "mine" (whitelist, tingnan ang __pbHome)
 var cuAsk = null, cuInfo = null; // modal ng catch-up setting: {kind:"add",names:[...]} o {kind:"back",id}; at kung aling ⓘ ang bukas (hindi ito sine-save)
 // ====== LISTAHAN NG SOURCE NG SCORE ======
@@ -47,6 +48,29 @@ function cleanTopN(n) { n = Number(n); return n === 3 || n === 5 || n === 10 ? n
 // Bilang ng courts. Whitelist: buong bilang na 1 hanggang MAX_COURTS lang, kung hindi ay 1 (ang lumang session ay 1 court).
 var MAX_COURTS = 6; // dapat pareho sa MAX_COURTS ng Worker
 function cleanCourts(n) { n = Number(n); return Number.isInteger(n) && n >= 1 && n <= MAX_COURTS ? n : 1; }
+// Mga match ng Court 2+ galing sa server. Sinusuri ang hugis ng bawat item; ang hindi tama ay itinatapon, at mga field lang na kailangan ang kinokopya.
+function cleanCourtMatches(arr) {
+  if (!Array.isArray(arr)) return [];
+  var out = [], seen = {};
+  function ids(a) {
+    if (!Array.isArray(a) || a.length < 1 || a.length > 2) return null;
+    for (var i = 0; i < a.length; i++) if (typeof a[i] !== "string" || !/^[a-z0-9]{1,12}$/.test(a[i])) return null;
+    return a.slice();
+  }
+  function cnt(x) { x = Number(x); return Number.isInteger(x) && x >= 0 && x <= 999 ? x : null; }
+  arr.slice(0, MAX_COURTS).forEach(function (x) {
+    if (!x || typeof x !== "object" || !x.m || typeof x.m !== "object") return;
+    var ct = Number(x.ct), v = Number(x.v);
+    if (!Number.isInteger(ct) || ct < 2 || ct > MAX_COURTS || seen[ct]) return;
+    if (typeof x.id !== "string" || !/^[a-z0-9]{1,12}$/.test(x.id)) return;
+    if (!Number.isInteger(v) || v < 1) return;
+    var A = ids(x.m.teamA), B = ids(x.m.teamB), sa = cnt(x.m.scoreA), sb = cnt(x.m.scoreB), tg = cnt(x.m.target);
+    if (!A || !B || sa === null || sb === null || tg === null) return;
+    seen[ct] = 1;
+    out.push({ ct: ct, id: x.id, v: v, m: { teamA: A, teamB: B, scoreA: sa, scoreB: sb, target: tg, done: x.m.done === true } });
+  });
+  return out;
+}
 function uid() { return Math.random().toString(36).slice(2, 8); }
 function $(id) { return document.getElementById(id); }
 function pairKey(a, b) { return a < b ? a + "|" + b : b + "|" + a; }
@@ -520,6 +544,7 @@ async function loadSession() {
     if (!okData(j.data)) throw new Error("bad data");
     data = j.data;
     version = j.version;
+    courtMatches = cleanCourtMatches(j.courts);
     cacheSave();
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
@@ -540,7 +565,10 @@ async function pollOnce() {
     if (!r.ok) return;
     var j = await r.json();
     lastSync = new Date().toLocaleTimeString();
-    if (j.version !== version && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
+    var cm = cleanCourtMatches(j.courts);
+    var cchg = JSON.stringify(cm) !== JSON.stringify(courtMatches); // nagbago ba ang matches ng ibang courts
+    courtMatches = cm;
+    if ((j.version !== version || cchg) && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
   } catch (e) {}
 }
@@ -1286,7 +1314,7 @@ function route() {
   clearTimeout(holdTimer);
   if (uiTick) { clearInterval(uiTick); uiTick = null; }
   sid = null; key = null; data = null; isOrg = false; loadError = null; statusText = "";
-  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null;
+  lastScore = null; flash = null; warmupInputOpen = false; cachedMode = false; pickPid = null; cuAsk = null; cuInfo = null; devHandle = null; courtMatches = [];
   var m = location.hash.match(/^#\/s\/([A-Za-z0-9]{4,12})(?:\/([a-f0-9]{32}))?$/);
   if (!m) { render(); return; }
   sid = m[1].toUpperCase();
