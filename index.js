@@ -517,7 +517,10 @@ async function loadSession() {
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
     render();
-    registerDevice().then(function () { startLive(); }); // kumuha muna ng device identity, tapos saka kumonekta sa socket (viewer at organizer)
+    registerDevice().then(function () {
+      startLive(); // kumuha muna ng device identity, tapos saka kumonekta sa socket (viewer at organizer)
+      if (isOrg) startPresence(); // organizer lang ang kumukuha ng listahan ng devices
+    });
   } catch (e) {
     loadError = "Could not connect. Please try again in a moment.";
     render();
@@ -567,10 +570,52 @@ async function registerDevice() {
   } catch (e) {}
 }
 
+/* ---------- presence (organizer lang) ---------- */
+var devList = [], presTimer = null, presBusy = false;
+async function pullPresence() {
+  if (!isOrg || !sid || !key || document.hidden || presBusy) return;
+  presBusy = true;
+  var mySid = sid;
+  var ctl = new AbortController();
+  var tmo = setTimeout(function () { ctl.abort(); }, 10000);
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid + "/presence", {
+      cache: "no-store",
+      headers: { "X-Organizer-Key": key },
+      signal: ctl.signal
+    });
+    if (!r.ok) return;
+    var j = await r.json();
+    if (sid !== mySid || !j || !Array.isArray(j.devices)) return;
+    // Sinusuri ulit ang hugis ng bawat item bago gamitin.
+    devList = j.devices.slice(0, 150).filter(function (x) {
+      return x && typeof x.handle === "string" && /^[A-Za-z0-9]{3,12}$/.test(x.handle);
+    }).map(function (x) {
+      return {
+        handle: x.handle,
+        name: typeof x.name === "string" ? x.name.replace(/[<>\u0000-\u001f]/g, "").slice(0, 40) : "",
+        online: x.online === true
+      };
+    });
+    if (typeof window.__pbRefreshDevices === "function") window.__pbRefreshDevices();
+  } catch (e) {
+  } finally {
+    clearTimeout(tmo);
+    presBusy = false;
+  }
+}
+function startPresence() {
+  clearInterval(presTimer);
+  presTimer = setInterval(pullPresence, 10000);
+  pullPresence();
+}
+
 /* ---------- live updates (WebSocket) ---------- */
 var ws = null, wsTimer = null, wsPing = null, wsRetry = 0;
 function wsUrl() { return API.replace(/^http/, "ws") + "/api/sessions/" + sid + "/ws"; }
 function stopLive() {
+  clearInterval(presTimer);
+  devList = [];
   clearInterval(pollTimer);
   clearInterval(wsPing);
   clearTimeout(wsTimer);
@@ -1281,6 +1326,13 @@ window.__pbSet = function (what, val) {
     mutate(function (d) { d.topN = tn; });
   }
 };
+// Para sa Settings sa navigation: listahan ng devices. Organizer lang ang may laman, ang iba ay walang makukuha.
+window.__pbDevices = function () {
+  if (!isOrg) return [];
+  return devList.map(function (x) {
+    return { handle: x.handle, name: x.name, online: x.online, mine: !!devHandle && x.handle === devHandle };
+  });
+};
 window.__pb = { makeData: makeData, genNext: genNext, startNext: startNext, rally: rally, undo: undo,
   finish: finish, addPlayers: addPlayers, toggleRest: toggleRest, setData: function (d) { data = d; } };
 route();
@@ -1502,6 +1554,28 @@ var cuList = el("ul", "cu-list");
 orgBox.appendChild(el("div", "nav-title set-gap", "New / returning players"));
 orgBox.appendChild(cuHelp);
 orgBox.appendChild(cuList);
+
+// Listahan ng mga device (display lang). textContent lang ang gamit, at ang data ay galing sa organizer-only na endpoint.
+var devHelp = el("p", "muted");
+var devListEl = el("ul", "cu-list");
+orgBox.appendChild(el("div", "nav-title set-gap", "Devices"));
+orgBox.appendChild(devHelp);
+orgBox.appendChild(devListEl);
+function paintDevices() {
+  var list = [];
+  try { list = typeof window.__pbDevices === "function" ? window.__pbDevices() : []; } catch (e) {}
+  if (!Array.isArray(list)) list = [];
+  devHelp.textContent = list.length ? "Devices that opened this session. View only for now." : "No devices yet.";
+  while (devListEl.firstChild) devListEl.removeChild(devListEl.firstChild);
+  list.forEach(function (it) {
+    var li = el("li", "");
+    var nm = (it.name ? String(it.name) : "Device " + String(it.handle)) + (it.mine ? " (this device)" : "");
+    li.appendChild(el("span", "", nm));
+    li.appendChild(el("span", "muted", it.online ? "\u25CF Online" : "\u25CB Offline"));
+    devListEl.appendChild(li);
+  });
+}
+window.__pbRefreshDevices = paintDevices;
 setPanel.appendChild(orgBox);
 
 var setBtn = el("button", "btn sec nav-theme");
@@ -1574,6 +1648,7 @@ function refreshSettings() {
     li.appendChild(el("span", "muted", label + (state ? " \u2022 " + state : "")));
     cuList.appendChild(li);
   });
+  paintDevices();
   paintHint();
 }
 anBtn.addEventListener("click", function (e) {
