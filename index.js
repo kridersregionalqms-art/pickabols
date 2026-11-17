@@ -1317,9 +1317,6 @@ function scorerHtml(d) {
       : '<div class="row" style="margin-top:14px"><button class="btn a grow" data-act="court-rally" data-team="A"' + offRally + ">Team A won the rally</button>" +
         '<button class="btn b grow" data-act="court-rally" data-team="B"' + offRally + ">Team B won the rally</button></div>") +
     (m.track && pickPid && m.teamA.concat(m.teamB).indexOf(pickPid) >= 0 ? pickerHtml(d) : "") +
-    (m.done && cm.sv !== true
-      ? '<div class="row" style="margin-top:14px"><button class="btn grow" data-act="court-save"' + (courtBusy ? " disabled" : "") + ">✅ Save result</button></div>"
-      : "") +
     '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="court-undo"' + offUndo + ">↩ Undo</button></div>" +
     '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
     (m.done
@@ -1328,6 +1325,10 @@ function scorerHtml(d) {
         : '<p class="muted center">This game is finished. Tap Save result to record it.</p>')
       : "") + "</div>";
   // Kapag naitala na ang resulta, dito na magsisimula ang susunod na laro. Habang may laro o hindi pa saved, "Next game" lang ang ipinapakita.
+  if (m.done && cm.sv !== true) {
+    h += '<div class="card"><h2>Game finished</h2><p class="muted">The result is ready to be added to the session history.</p>' +
+      '<button class="btn grow" data-act="court-save"' + (courtBusy ? " disabled" : "") + ">✅ Save result</button></div>";
+  }
   h += ((m.done && cm.sv === true) ? courtSetupHtml(d) : courtNextHtml(d, myCourt)) + playersReadHtml(d);
   h += '<div class="card"><button class="btn sec sm" data-act="court-leave">✕ Cancel as scorer for this court</button>' +
     '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
