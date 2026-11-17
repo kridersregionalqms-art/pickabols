@@ -1508,9 +1508,10 @@ async function sendCourtScore(act, team, pid, src) {
   }
   // Kung tinanggap ng Worker, gamitin agad ang ibinalik na estado (hindi na hihintaying mag-GET).
   // Dumadaan pa rin sa cleanCourtMatches (whitelist at pagsusuri ng hugis) bago gamitin.
-  var fresh = false;
+  var fresh = false, accepted = false;
   try {
     if (r && r.ok) {
+      accepted = true;
       var jj = await r.json();
       var one = cleanCourtMatches([{ ct: court, id: cm.id, v: jj && jj.v, sv: false, m: jj && jj.m }]);
       if (sid === mySid && myCourt === court && one.length === 1) {
@@ -1522,7 +1523,7 @@ async function sendCourtScore(act, team, pid, src) {
   if (!fresh && sid === mySid) await pollOnce(); // kung may problema, kunin ang totoong estado mula sa D1
   courtBusy = false;
   if (sid === mySid) render();
-  if (fresh && sid === mySid) pollOnce(); // sa background lang: tiyaking tugma sa server
+  if (accepted && fresh && sid === mySid) pollOnce(); // background confirmation lang; huwag nang patagalin ang UI
 }
 // Scorer lang. Nagpapadala ng "save result" para sa natapos na laro ng court niya. Ang Worker ang may huling pasya
 // (role, court, match ID, version, tapos na ba ang laro). Ligtas ulitin: hindi nadodoble ang resulta sa history.
@@ -1539,6 +1540,7 @@ async function sendCourtSave() {
   var mySid = sid;
   var ctl = new AbortController();
   var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+  var saved = false;
   try {
     var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/save", {
       method: "POST",
@@ -1547,6 +1549,7 @@ async function sendCourtSave() {
       signal: ctl.signal
     });
     if (r.ok) {
+      saved = true;
       toast("Result saved \u2713");
     } else {
       var j = null;
@@ -1564,7 +1567,12 @@ async function sendCourtSave() {
   } finally {
     clearTimeout(tmo);
   }
-  if (sid === mySid) await pollOnce(); // kunin ang bagong state (sv = true)
+  if (saved && sid === mySid) {
+    cm.sv = true;
+    pollOnce(); // background confirmation at pagkuha ng susunod na reservation
+  } else if (sid === mySid) {
+    await pollOnce();
+  }
   courtBusy = false;
   if (sid === mySid) render();
 }
@@ -1720,6 +1728,7 @@ async function sendCourtNext(act, team) {
   var mySid = sid;
   var ctl = new AbortController();
   var tmo = setTimeout(function () { ctl.abort(); }, 15000);
+  var changed = false;
   try {
     var r = await fetch(API + "/api/sessions/" + mySid + "/courts/" + court + "/next", {
       method: "POST",
@@ -1727,7 +1736,17 @@ async function sendCourtNext(act, team) {
       body: JSON.stringify(body),
       signal: ctl.signal
     });
-    if (!r.ok) {
+    if (r.ok) {
+      var okNext = await r.json();
+      if (sid === mySid && data && okNext && Number.isInteger(okNext.version)) {
+        data.cn = data.cn || {};
+        if (okNext.next && typeof okNext.next === "object") data.cn[String(court)] = okNext.next;
+        else delete data.cn[String(court)];
+        version = okNext.version;
+        cacheSave();
+        changed = true;
+      }
+    } else {
       var j = null;
       try { j = await r.json(); } catch (e2) {}
       csToast(r.status, j && typeof j.error === "string" ? j.error : "");
@@ -1737,9 +1756,10 @@ async function sendCourtNext(act, team) {
   } finally {
     clearTimeout(tmo);
   }
-  if (sid === mySid) await pollOnce();
   courtBusy = false;
   if (sid === mySid) render();
+  if (changed && sid === mySid) pollOnce(); // background confirmation lang
+  else if (sid === mySid) await pollOnce();
 }
 // Scorer lang. Begin game: ang Worker ang gagawa ng bagong match mula sa naka-reserve na laro ng court na ito.
 async function sendCourtStart() {
