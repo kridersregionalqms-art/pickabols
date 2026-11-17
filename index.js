@@ -711,6 +711,7 @@ function startLive() {
         var m = JSON.parse(e.data);
         if (m && m.t === "changed" && m.v !== version) pollOnce();
         else if (m && m.t === "role") pullMe(); // nagbago ang role ng device na ito
+        else if (m && m.t === "courts") pollOnce(); // nagbago ang match ng Court 2+
       } catch (x) {}
     };
     ws.onclose = function (ev) {
