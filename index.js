@@ -168,16 +168,76 @@ function validNext(d) {
   }
   return true;
 }
-function ensureNext(d) { if (!validNext(d)) genNext(d); }
+function ensureNext(d) {
+  if (!validNext(d)) genNext(d);
+  ensureCourtNexts(d);
+}
+// Mga id na hindi puwedeng kunin ng court ct: naka-reserve sa ibang court, o naglalaro sa ibang court.
+// Ang naglalaro sa parehong court ay puwede (matatapos sila bago ang susunod na laro).
+function reservedIds(d, ct) {
+  var s = Object.create(null);
+  function add(t) {
+    if (t && Array.isArray(t.teamA) && Array.isArray(t.teamB)) {
+      t.teamA.concat(t.teamB).forEach(function (x) { if (typeof x === "string") s[x] = 1; });
+    }
+  }
+  if (ct !== 1) { add(d.next); add(d.pending); add(d.current); }
+  var cn = d.cn || {};
+  Object.keys(cn).forEach(function (k) { if (Number(k) !== ct) add(cn[k]); });
+  courtMatches.forEach(function (x) { if (x && x.m && !x.m.done && x.ct !== ct) add(x.m); });
+  return s;
+}
+// Valid pa ba ang naka-reserve na laro ng court ct? Hindi ito papalitan hangga't valid pa.
+function validCn(d, ct) {
+  var n = d.cn && d.cn[String(ct)];
+  if (!n || !Array.isArray(n.teamA) || !Array.isArray(n.teamB)) return false;
+  var ids = [].concat(n.teamA, n.teamB);
+  if (ids.length !== need(d)) return false;
+  var skip = reservedIds(d, ct), seen = {};
+  for (var i = 0; i < ids.length; i++) {
+    if (seen[ids[i]] || skip[ids[i]]) return false;
+    seen[ids[i]] = 1;
+    var p = d.players.filter(function (x) { return x.id === ids[i]; })[0];
+    if (!p || !p.active) return false;
+  }
+  return true;
+}
+// Para sa Court 2 hanggang ang bilang ng courts: panatilihin ang valid na reservation, gumawa lang ng kulang.
+function ensureCourtNexts(d) {
+  var nc = cleanCourts(d.courts);
+  d.cn = d.cn || {};
+  Object.keys(d.cn).forEach(function (k) { if (Number(k) > nc || Number(k) < 2) delete d.cn[k]; });
+  for (var ct = 2; ct <= nc; ct++) {
+    if (validCn(d, ct)) continue;
+    var g = pickGame(d, reservedIds(d, ct));
+    if (g) d.cn[String(ct)] = g; else delete d.cn[String(ct)];
+  }
+  if (!Object.keys(d.cn).length) delete d.cn;
+}
+// Court (2-6) kung saan naka-reserve ang player sa susunod na laro; 1 kung sa Court 1; 0 kung wala.
+function nextCourtOf(d, id) {
+  if (d.next && d.next.teamA.concat(d.next.teamB).indexOf(id) >= 0) return 1;
+  var cn = d.cn || {};
+  for (var k = 2; k <= MAX_COURTS; k++) {
+    var n = cn[String(k)];
+    if (n && Array.isArray(n.teamA) && Array.isArray(n.teamB) && n.teamA.concat(n.teamB).indexOf(id) >= 0) return k;
+  }
+  return 0;
+}
 
 // Pinipili ang pinakakaunti ang laro, tapos ang pinakamatagal nang naghihintay.
 // Random ang tie-break at ang hatian ng teams (iniiwasan ang paulit-ulit na partner/kalaban).
 function genNext(d) {
+  d.next = pickGame(d, reservedIds(d, 1));
+}
+// Iisang logic ng pagpili ng susunod na laro para sa kahit anong court. skip = mga id na hindi puwedeng kunin (naka-reserve o naglalaro sa ibang court).
+// Ibinabalik ang { teamA, teamB, round }, o null kung kulang ang libreng player.
+function pickGame(d, skip) {
   d.partners = d.partners || {};
   d.opps = d.opps || {};
   var k = need(d);
-  var act = activePlayers(d);
-  if (act.length < k) { d.next = null; return; }
+  var act = activePlayers(d).filter(function (p) { return !skip[p.id]; });
+  if (act.length < k) return null;
   var useCu = true; // per-player na ang catch-up: kung walang catch-up na player, normal na rotation ang lalabas
   var rnd = num(d.round) + 1; // round ng larong ito
   if (useCu) clearCaught(d);
@@ -212,7 +272,7 @@ function genNext(d) {
     });
     A = best[0]; B = best[1];
   }
-  d.next = { teamA: A, teamB: B, round: num(d.round) + 1 };
+  return { teamA: A, teamB: B, round: num(d.round) + 1 };
 }
 function startNext(d, forced) {
   if (d.current) return;
@@ -445,12 +505,21 @@ function courtOf(d, id) {
   }
   return 0;
 }
-// Status ng player: Resting / Playing (sa alinmang court) / Up next / Waiting. Fixed na teksto lang.
-function playerStatusHtml(d, p, nextIds) {
+// Status ng player: Resting / Playing (sa alinmang court) / Up next (sa alinmang court) / Waiting. Fixed na teksto lang.
+function playerStatusHtml(d, p) {
   return !p.active ? '<span class="tag rest">Resting</span>'
     : courtOf(d, p.id) ? '<span class="tag play">Playing</span>'
-    : nextIds.indexOf(p.id) >= 0 ? '<span class="tag next">Up next</span>'
+    : nextCourtOf(d, p.id) ? '<span class="tag next">Up next</span>'
     : '<span class="tag">Waiting</span>';
+}
+// Susunod na laro ng isang court, para sa scorer. Ipinapakita lang kung valid ang lahat ng id; ang mga pangalan ay dumadaan sa esc().
+function courtNextHtml(d, ct) {
+  var n = d.cn && d.cn[String(ct)];
+  var ok = !!n && Array.isArray(n.teamA) && Array.isArray(n.teamB) &&
+    n.teamA.concat(n.teamB).every(function (id) { return d.players.some(function (p) { return p.id === id; }); });
+  return '<div class="card"><h2>Next game for Court ' + num(ct) + "</h2>" + (ok
+    ? "<p><strong>" + esc(teamNames(n.teamA)) + '</strong> <span class="muted">vs</span> <strong>' + esc(teamNames(n.teamB)) + "</strong></p>"
+    : '<p class="muted">Not ready yet. Waiting for enough free players.</p>') + "</div>";
 }
 // Read-only na listahan ng players (Name, Games, Status, Court). Ginagamit sa scorer screen. Lahat ng pangalan ay dumadaan sa esc().
 function playersReadHtml(d) {
@@ -459,8 +528,8 @@ function playersReadHtml(d) {
   var h = '<div class="card"><h2>Players (' + activePlayers(d).length + ' active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>' +
     (multi ? '<th>Court</th>' : '') + '</tr>';
   d.players.forEach(function (p) {
-    var ct = courtOf(d, p.id);
-    h += '<tr><td>' + esc(p.name) + '</td><td>' + num(p.games) + '</td><td>' + playerStatusHtml(d, p, nextIds) + '</td>' +
+    var ct = courtOf(d, p.id) || nextCourtOf(d, p.id);
+    h += '<tr><td>' + esc(p.name) + '</td><td>' + num(p.games) + '</td><td>' + playerStatusHtml(d, p) + '</td>' +
       (multi ? '<td>' + (p.active && ct ? num(ct) : '-') + '</td>' : '') + '</tr>';
   });
   return h + '</table></div>';
@@ -599,6 +668,12 @@ async function loadSession() {
     lastSync = new Date().toLocaleTimeString();
     if (isOrg) saveKey(sid, key, data.name);
     render();
+    if (isOrg && cleanCourts(data.courts) >= 2) {
+      // Session na may Multi-court pero kulang pa ang reservation: gawin na ngayon at i-save.
+      var cnBefore = JSON.stringify(data.cn || null);
+      ensureCourtNexts(data);
+      if (JSON.stringify(data.cn || null) !== cnBefore) { cacheSave(); render(); persist(); }
+    }
     registerDevice().then(function () {
       startLive(); // kumuha muna ng device identity, tapos saka kumonekta sa socket (viewer at organizer)
       if (isOrg) startPresence(); else pullMe(); // organizer: listahan ng devices; viewer: alamin kung scorer ba siya
@@ -621,6 +696,31 @@ async function pollOnce() {
     if ((j.version !== version || cchg) && okData(j.data)) { version = j.version; data = j.data; cacheSave(); render(); }
     else { var el = $("sync"); if (el) el.textContent = lastSync; }
   } catch (e) {}
+}
+
+// Organizer lang. Kinukuha ang mga match ng Court 2+ para laging tama ang "Playing/Up next". Magre-render lang kung nagbago
+// ang mga player o ang "done" ng isang court (hindi sa bawat rally), para hindi mabura ang tina-type sa "Add players".
+var courtsBusy = false;
+function courtSig(a) {
+  return JSON.stringify(a.map(function (x) { return [x.ct, x.id, x.m.teamA, x.m.teamB, x.m.done]; }));
+}
+async function pullCourts() {
+  if (!isOrg || !sid || document.hidden || courtsBusy) return;
+  courtsBusy = true;
+  var mySid = sid;
+  try {
+    var r = await fetch(API + "/api/sessions/" + mySid, { cache: "no-store" });
+    if (!r.ok) return;
+    var j = await r.json();
+    if (sid !== mySid || !j) return;
+    var cm = cleanCourtMatches(j.courts);
+    var changed = courtSig(cm) !== courtSig(courtMatches);
+    courtMatches = cm;
+    if (changed) render();
+  } catch (e) {
+  } finally {
+    courtsBusy = false;
+  }
 }
 
 /* ---------- device identity ---------- */
@@ -763,6 +863,7 @@ function startLive() {
         }
       } catch (e) {}
       pollOnce(); // catch up on anything missed while disconnected
+      if (isOrg) pullCourts();
     };
     ws.onmessage = function (e) {
       if (e.data === "pong") return;
@@ -770,7 +871,7 @@ function startLive() {
         var m = JSON.parse(e.data);
         if (m && m.t === "changed" && m.v !== version) pollOnce();
         else if (m && m.t === "role") pullMe(); // nagbago ang role ng device na ito
-        else if (m && m.t === "courts") pollOnce(); // nagbago ang match ng Court 2+
+        else if (m && m.t === "courts") { if (isOrg) pullCourts(); else pollOnce(); } // nagbago ang match ng Court 2+
       } catch (x) {}
     };
     ws.onclose = function (ev) {
@@ -996,7 +1097,7 @@ function nextGridHtml(d, n) {
 }
 function nextHtml(d) {
   var n = d.next;
-  if (!n) return '<p class="muted">At least ' + need(d) + " active players are needed to make a game.</p>";
+  if (!n) return '<p class="muted">Not enough free players for the next game yet (need ' + need(d) + ").</p>";
   var h = '<p><strong>' + esc(teamNames(n.teamA)) + '</strong> <span class="muted">vs</span> <strong>' + esc(teamNames(n.teamB)) + "</strong></p>";
   if (d.mode === "doubles") h = nextGridHtml(d, n);
   if (isOrg) {
@@ -1076,7 +1177,7 @@ function scorerHtml(d) {
   var h = '<div class="banner">🎯 You are the scorer for Court ' + num(myCourt) + "</div>";
   var live = '<p class="muted">Updates automatically • Last update: <span id="sync">' + esc(lastSync) + "</span></p>";
   if (!cm || (d.mode === "doubles") !== cm.m.dbl) {
-    return h + '<div class="card"><h2>Court ' + num(myCourt) + '</h2><p class="muted">Waiting for a game on this court. This page updates by itself.</p></div>' + playersReadHtml(d) + live;
+    return h + '<div class="card"><h2>Court ' + num(myCourt) + '</h2><p class="muted">Waiting for a game on this court. This page updates by itself.</p></div>' + courtNextHtml(d, myCourt) + playersReadHtml(d) + live;
   }
   var m = cm.m;
   var offRally = (courtBusy || m.done) ? " disabled" : "";
@@ -1088,7 +1189,7 @@ function scorerHtml(d) {
     '<div class="row" style="margin-top:8px"><button class="btn sec sm" data-act="court-undo"' + offUndo + ">↩ Undo</button></div>" +
     '<p class="muted">If the serving team wins the rally, they get +1 point. If the receiving team wins, no point is scored but the serve changes.</p>' +
     (m.done ? '<p class="muted center">This game is finished. The next game will appear here when it is ready.</p>' : "") + "</div>";
-  h += playersReadHtml(d);
+  h += courtNextHtml(d, myCourt) + playersReadHtml(d);
   h += '<div class="card"><button class="btn sec sm" data-act="court-leave">✕ Cancel as scorer for this court</button>' +
     '<p class="muted">You will become a viewer. The organizer can assign a scorer again anytime.</p></div>';
   return h + live;
@@ -1167,8 +1268,8 @@ function renderSession() {
   var multiC = cleanCourts(d.courts) >= 2; // lalabas lang ang Court column kapag Multi-court
   h += '<div class="card"><h2>Players (' + activePlayers(d).length + " active)</h2><table><tr><th>Name</th><th>Games</th><th>Status</th>" + (multiC ? "<th>Court</th>" : "") + (isOrg ? "<th></th>" : "") + "</tr>";
   d.players.forEach(function (p) {
-    var pc = courtOf(d, p.id);
-    h += "<tr><td>" + esc(p.name) + "</td><td>" + num(p.games) + "</td><td>" + playerStatusHtml(d, p, nextIds) + "</td>" +
+    var pc = courtOf(d, p.id) || nextCourtOf(d, p.id);
+    h += "<tr><td>" + esc(p.name) + "</td><td>" + num(p.games) + "</td><td>" + playerStatusHtml(d, p) + "</td>" +
       (multiC ? "<td>" + (p.active && pc ? num(pc) : "-") + "</td>" : "");
     if (isOrg) {
       h += '<td style="white-space:nowrap"><button class="btn sec sm" data-act="rest" data-id="' + esc(p.id) + '">' + (p.active ? "Rest" : "Back") + "</button> " +
@@ -1679,7 +1780,7 @@ window.__pbSet = function (what, val) {
   } else if (what === "courts") {
     var cn = Math.floor(Number(val));
     if (!(cn >= 1 && cn <= MAX_COURTS)) return; // hindi tatanggapin ang kakaibang halaga
-    mutate(function (d) { if (!d.current) d.courts = cn; }); // naka-lock habang may tumatakbong laro
+    mutate(function (d) { if (!d.current) { d.courts = cn; ensureCourtNexts(d); } }); // naka-lock habang may tumatakbong laro; inaayos din ang reservation ng mga court
   }
 };
 // Para sa Settings sa navigation: listahan ng devices. Organizer lang ang may laman, ang iba ay walang makukuha.
