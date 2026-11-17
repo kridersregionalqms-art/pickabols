@@ -10,7 +10,7 @@ var API = "https://pickabols-api.pickabolers.workers.dev";
 var $app = document.getElementById("app");
 var sid = null, key = null, data = null, version = 0, isOrg = false;
 var pollTimer = null, loadError = null, lastSync = "", statusText = "";
-var saving = false, dirty = false;
+var saving = false, dirty = false, conflict = false; // conflict = may ibang device na nakapag-save na ng session
 var lastScore = null, flash = null;
 var uiTick = null, warmupInputOpen = false;
 var holdUntil = 0, holdTimer = null, cachedMode = false;
@@ -472,13 +472,14 @@ async function persist() {
         r = await fetch(API + "/api/sessions/" + sid, {
           method: "PUT",
           headers: { "Content-Type": "application/json", "X-Organizer-Key": key },
-          body: JSON.stringify({ data: data }),
+          body: JSON.stringify({ data: data, version: version }),
           signal: ctl.signal
         });
       } finally {
         clearTimeout(tmo);
       }
       if (r.status === 403) throw new Error("403");
+      if (r.status === 409) throw new Error("409");
       if (!r.ok) throw new Error(String(r.status));
       var j = await r.json();
       version = j.version;
@@ -486,9 +487,12 @@ async function persist() {
     } while (dirty);
     setStatus("✓ Saved");
   } catch (e) {
+    conflict = e.message === "409";
     setStatus(e.message === "403"
       ? "⚠ Wrong organizer key, cannot save"
-      : "⚠ Not saved. Click here to retry");
+      : conflict
+        ? "⚠ This session was changed on another device. Click here to reload"
+        : "⚠ Not saved. Click here to retry");
   } finally {
     saving = false;
     document.body.classList.remove("saving");
@@ -1093,7 +1097,11 @@ function handle(act, ds) {
       break;
     case "reload": loadSession(); break;
     // (walang "home-new" case, ang nav na ang nagbubukas ng home gamit ang __pbHome)
-    case "retry": if (!saving) persist(); break;
+    case "retry":
+      if (saving) break;
+      if (conflict) { conflict = false; loadSession(); } // may ibang nag-save: kunin ang pinakabagong kopya mula sa server
+      else persist();
+      break;
     case "copy": copyText(base + "#/s/" + sid); break;
     case "share": shareView(base + "#/s/" + sid); break;
     case "rally": mutate(function (d) { rally(d, ds.team); }); break;
